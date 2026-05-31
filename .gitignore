@@ -1,0 +1,31 @@
+# macOS
+.DS_Store
+
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+
+# Build output
+DerivedData/
+build/
+.build/
+*.ipa
+*.dSYM/
+
+# SwiftPM/Xcode package state that should stay local
+.swiftpm/
+
+# Local configuration and secrets
+.env
+.env.*
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile
+*.pem
+*.key
+id_*
+
+# Scratch files
+image.png

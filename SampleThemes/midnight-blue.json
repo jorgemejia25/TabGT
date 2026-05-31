@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "midnight-blue",
+  "displayName": "Midnight Blue",
+  "appearance": "dark",
+  "blueWashOpacity": 0.10,
+  "colors": {
+    "windowBackground": "#141414",
+    "backgroundGradientMid": "#121218",
+    "backgroundGradientDeep": "#0E0E14",
+    "blueWash": "#3B82F6",
+    "navigator": "#1A1A22",
+    "toolbar": "#1E1E28",
+    "editor": "#141414",
+    "panel": "#1A1A22",
+    "elevatedPanel": "#262632",
+    "separator": "#333340",
+    "textPrimary": "#E4E4EC",
+    "textSecondary": "#9494A8",
+    "textTertiary": "#686878",
+    "selectionBlue": "#3B82F6",
+    "selectionBlueMuted": "#1E3A5F",
+    "warning": "#FBBF24",
+    "danger": "#F87171",
+    "success": "#34D399",
+    "terminalBackground": "#0F0F14",
+    "terminalForeground": "#E4E4EC",
+    "terminalCommand": "#60A5FA",
+    "terminalSystem": "#818CF8"
+  }
+}

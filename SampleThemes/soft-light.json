@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "soft-light",
+  "displayName": "Soft Light",
+  "appearance": "light",
+  "blueWashOpacity": 0.05,
+  "colors": {
+    "windowBackground": "#FFFFFF",
+    "backgroundGradientMid": "#FAFAFA",
+    "backgroundGradientDeep": "#F3F3F3",
+    "blueWash": "#0078D4",
+    "navigator": "#F3F3F3",
+    "toolbar": "#F3F3F3",
+    "editor": "#FFFFFF",
+    "panel": "#F3F3F3",
+    "elevatedPanel": "#E8E8E8",
+    "separator": "#E5E5E5",
+    "textPrimary": "#1E1E1E",
+    "textSecondary": "#616161",
+    "textTertiary": "#8A8A8A",
+    "selectionBlue": "#0078D4",
+    "selectionBlueMuted": "#CCE4F7",
+    "warning": "#CA8A04",
+    "danger": "#DC2626",
+    "success": "#16A34A",
+    "terminalBackground": "#FFFFFF",
+    "terminalForeground": "#1E1E1E",
+    "terminalCommand": "#0451A5",
+    "terminalSystem": "#6B7280"
+  }
+}

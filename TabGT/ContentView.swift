@@ -1,24 +1,17 @@
-//
-//  ContentView.swift
-//  TabGT
-//
-//  Created by Jorge Andrés Mejía on 30/05/26.
-//
-
 import SwiftUI
 
 struct ContentView: View {
-    var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
-        }
-        .padding()
-    }
-}
+    @StateObject private var themeStore = ThemeStore.shared
+    @StateObject private var terminalFontSettings = TerminalFontSettings.shared
+    @State private var isShowingLaunchSplash = true
 
-#Preview {
-    ContentView()
+    var body: some View {
+        RootView()
+            .environmentObject(ConnectionsViewModel.shared)
+            .environmentObject(themeStore)
+            .environmentObject(terminalFontSettings)
+            .preferredColorScheme(themeStore.theme.appearance.colorScheme)
+            .id(themeStore.selectedThemeID)
+            .launchSplash(isPresented: $isShowingLaunchSplash)
+    }
 }

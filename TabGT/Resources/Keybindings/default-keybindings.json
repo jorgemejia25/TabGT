@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "bindings": {
+    "closeActiveGroup": {
+      "key": "w",
+      "modifiers": [
+        "command",
+        "shift"
+      ]
+    },
+    "closeActiveTab": {
+      "key": "w",
+      "modifiers": [
+        "command"
+      ]
+    },
+    "newTerminal": {
+      "key": "t",
+      "modifiers": [
+        "command"
+      ]
+    },
+    "openSettings": {
+      "key": ",",
+      "modifiers": [
+        "command"
+      ]
+    },
+    "splitDown": {
+      "key": "\\",
+      "modifiers": [
+        "command",
+        "shift"
+      ]
+    },
+    "splitRight": {
+      "key": "\\",
+      "modifiers": [
+        "command"
+      ]
+    },
+    "toggleInspector": {
+      "key": "b",
+      "modifiers": [
+        "command",
+        "option"
+      ]
+    },
+    "toggleNavigator": {
+      "key": "b",
+      "modifiers": [
+        "command"
+      ]
+    }
+  }
+}

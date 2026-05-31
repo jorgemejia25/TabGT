@@ -1,0 +1,49 @@
+name: Bug report
+description: Report a reproducible problem in TabGT.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include real credentials, private keys, production hostnames,
+        terminal transcripts, tokens, or screenshots with sensitive data.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the minimal steps needed to reproduce the issue.
+      placeholder: |
+        1. Open...
+        2. Click...
+        3. See...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: TabGT version
+      placeholder: 1.0.0
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: macOS 15.x
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional notes
