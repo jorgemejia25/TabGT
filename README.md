@@ -47,7 +47,7 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md) for details.
 - Swift Package Manager, provided by Xcode.
 - System OpenSSH at `/usr/bin/ssh` for SSH sessions.
 
-The current Xcode project is configured with a macOS `26.5` deployment target.
+The current Xcode project is configured with a macOS `26.0` deployment target.
 If you need to support older macOS versions, review the project settings and
 test the app on those systems before distributing builds.
 

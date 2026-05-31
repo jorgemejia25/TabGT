@@ -2,6 +2,7 @@ import Foundation
 @testable import TabGT
 import Testing
 
+@MainActor
 struct SSHHostRepositoryTests {
     @Test func firstLoadCreatesEmptyCatalog() throws {
         let tempDirectory = makeTemporaryDirectory()

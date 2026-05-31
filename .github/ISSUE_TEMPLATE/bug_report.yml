@@ -42,7 +42,7 @@ body:
     id: macos
     attributes:
       label: macOS version
-      placeholder: macOS 15.x
+      placeholder: macOS 26.x
   - type: textarea
     id: notes
     attributes:
