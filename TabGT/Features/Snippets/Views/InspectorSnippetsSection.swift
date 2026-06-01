@@ -2,9 +2,13 @@ import SwiftUI
 
 struct InspectorSnippetsSection: View {
     @ObservedObject var viewModel: SnippetsViewModel
-    var sessionID: UUID?
+    var session: TerminalSession?
+    var profileContext: SnippetProfileContext?
+    var reorderSectionID: InspectorSectionID? = nil
 
     @State private var filterText = ""
+
+    private var sessionID: UUID? { session?.id }
 
     private var filteredSnippets: [CommandSnippet] {
         let query = filterText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -16,110 +20,98 @@ struct InspectorSnippetsSection: View {
         InspectorAccordionSection(
             title: "Snippets",
             storageKey: "tabgt.inspector.expanded.snippets",
-            defaultExpanded: true
+            defaultExpanded: true,
+            reorderSectionID: reorderSectionID
         ) {
             SearchField(text: $filterText, placeholder: "Filter snippets")
-                .padding(.bottom, 6)
 
             if filteredSnippets.isEmpty {
-                Text(emptyStateMessage)
-                    .font(.system(size: 11, weight: .regular))
-                    .foregroundStyle(AppTheme.textTertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .frame(height: 24)
+                InspectorEmptyState(message: emptyStateMessage)
             } else {
-                VStack(spacing: 0) {
-                    ForEach(filteredSnippets) { snippet in
-                        snippetRow(snippet)
-
-                        if snippet.id != filteredSnippets.last?.id {
-                            Rectangle()
-                                .fill(AppTheme.panelStroke.opacity(0.55))
-                                .frame(height: 1)
-                                .padding(.vertical, 6)
+                InspectorGroupedList {
+                    ForEach(Array(filteredSnippets.enumerated()), id: \.element.id) { index, snippet in
+                        if index > 0 {
+                            InspectorGroupedListDivider()
                         }
+                        snippetRow(snippet)
                     }
                 }
             }
 
-            Button {
+            InspectorLinkButton(title: "New Snippet", systemImage: "plus") {
                 viewModel.presentCreateEditor()
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 11, weight: .medium))
-                    Text("New Snippet")
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .foregroundStyle(AppTheme.selectionBlue)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(height: 28)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plainClickable)
-            .padding(.top, 8)
         }
         .sheet(isPresented: $viewModel.isEditorPresented, onDismiss: {
             viewModel.dismissEditor()
         }) {
-            SnippetEditorSheet(viewModel: viewModel, draft: $viewModel.editorDraft)
+            SnippetEditorSheet(
+                viewModel: viewModel,
+                draft: $viewModel.editorDraft,
+                profileContext: profileContext
+            )
         }
     }
 
     private var emptyStateMessage: String {
         let query = filterText.trimmingCharacters(in: .whitespacesAndNewlines)
         if query.isEmpty && viewModel.snippets.isEmpty {
-            return "No snippets yet — create one to get started"
+            return "No snippets yet"
         }
-        return "No snippets match your filter"
+        return "No matches"
     }
 
     private func snippetRow(_ snippet: CommandSnippet) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .center, spacing: 6) {
-                triggerPill(snippet.trigger)
+        InspectorGroupedListRow {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .center, spacing: 6) {
+                    triggerPill(snippet.trigger)
 
-                Text(snippet.title)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(AppTheme.textPrimary)
-                    .lineLimit(1)
+                    Text(snippet.title)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(AppTheme.textPrimary)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    snippetActionsMenu(snippet)
+                }
+
+                Text(snippet.command)
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(AppTheme.textSecondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
 
-                snippetActionsMenu(snippet)
-            }
+                Text(SnippetLaunchResolver.launchSummary(for: snippet, context: profileContext))
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(AppTheme.textTertiary)
 
-            Text(snippet.command)
-                .font(.system(size: 10, weight: .regular, design: .monospaced))
-                .foregroundStyle(AppTheme.textSecondary)
-                .lineLimit(2)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
+                if sessionID != nil {
+                    HStack(spacing: 5) {
+                        InspectorInlineAction(title: "Paste", systemImage: "doc.on.clipboard") {
+                            paste(snippet)
+                        }
 
-            if sessionID != nil {
-                HStack(spacing: 6) {
-                    snippetActionButton("Insert", systemImage: "arrow.down.left.circle") {
-                        insert(snippet, submit: false)
+                        InspectorInlineAction(title: "Run", systemImage: "play.fill") {
+                            runInCurrentTab(snippet)
+                        }
+
+                        Spacer(minLength: 0)
+
+                        Button {
+                            viewModel.presentEditEditor(for: snippet)
+                        } label: {
+                            Text("Edit")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(AppTheme.textTertiary)
+                        }
+                        .buttonStyle(.plainClickable)
                     }
-
-                    snippetActionButton("Run", systemImage: "play.fill") {
-                        insert(snippet, submit: true)
-                    }
-
-                    Spacer(minLength: 0)
-
-                    Button {
-                        viewModel.presentEditEditor(for: snippet)
-                    } label: {
-                        Text("Edit")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(AppTheme.textTertiary)
-                    }
-                    .buttonStyle(.plainClickable)
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .contextMenu {
             snippetContextMenu(snippet)
@@ -130,12 +122,12 @@ struct InspectorSnippetsSection: View {
         Text(trigger)
             .font(.system(size: 10, weight: .semibold, design: .monospaced))
             .foregroundStyle(AppTheme.selectionBlue)
-            .padding(.horizontal, 6)
+            .padding(.horizontal, 5)
             .padding(.vertical, 2)
             .background(AppTheme.selectionBlue.opacity(0.10), in: Capsule())
             .overlay(
                 Capsule()
-                    .stroke(AppTheme.selectionBlue.opacity(0.22), lineWidth: 1)
+                    .stroke(AppTheme.selectionBlue.opacity(0.20), lineWidth: 1)
             )
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
@@ -145,10 +137,10 @@ struct InspectorSnippetsSection: View {
         Menu {
             snippetContextMenu(snippet)
         } label: {
-            Image(systemName: "ellipsis.circle")
-                .font(.system(size: 12, weight: .medium))
+            Image(systemName: "ellipsis")
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(AppTheme.textTertiary)
-                .frame(width: 20, height: 20)
+                .frame(width: 18, height: 18)
                 .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
@@ -157,12 +149,12 @@ struct InspectorSnippetsSection: View {
 
     @ViewBuilder
     private func snippetContextMenu(_ snippet: CommandSnippet) -> some View {
-        if let sessionID {
-            Button("Insert") {
-                viewModel.insert(snippet, for: sessionID, submit: false)
+        if sessionID != nil {
+            Button("Paste") {
+                paste(snippet)
             }
-            Button("Insert and Run") {
-                viewModel.insert(snippet, for: sessionID, submit: true)
+            Button("Run in New Tab") {
+                runInNewTab(snippet)
             }
             Divider()
         }
@@ -176,28 +168,18 @@ struct InspectorSnippetsSection: View {
         }
     }
 
-    private func snippetActionButton(
-        _ title: String,
-        systemImage: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(AppTheme.textSecondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(AppTheme.elevatedPanel.opacity(0.72), in: Capsule())
-                .overlay(
-                    Capsule()
-                        .stroke(AppTheme.panelStroke, lineWidth: 1)
-                )
-        }
-        .buttonStyle(.plainClickable)
+    private func paste(_ snippet: CommandSnippet) {
+        guard let sessionID else { return }
+        viewModel.insert(snippet, for: sessionID, submit: false)
     }
 
-    private func insert(_ snippet: CommandSnippet, submit: Bool) {
+    private func runInCurrentTab(_ snippet: CommandSnippet) {
         guard let sessionID else { return }
-        viewModel.insert(snippet, for: sessionID, submit: submit)
+        viewModel.run(snippet, from: sessionID)
+    }
+
+    private func runInNewTab(_ snippet: CommandSnippet) {
+        guard let sessionID else { return }
+        viewModel.runInNewTab(snippet, from: sessionID)
     }
 }

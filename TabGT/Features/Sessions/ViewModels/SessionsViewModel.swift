@@ -1,28 +1,56 @@
 import Combine
 import Foundation
 
+struct SSHRetryRequest: Equatable {
+    var id: UUID
+    var sessionID: UUID
+}
+
 @MainActor
 final class SessionsViewModel: ObservableObject {
-    @Published private(set) var sessions: [TerminalSession]
-    @Published var layout: WorkspaceLayout
+    let windowID: UUID
 
+    @Published private(set) var layout: WorkspaceLayout
+    @Published var sshRetryRequest: SSHRetryRequest?
+
+    private let coordinator: WorkspaceCoordinator
     private weak var automations: AutomationsViewModel?
+    private var cancellables = Set<AnyCancellable>()
+
+    var sessions: [TerminalSession] {
+        coordinator.sessions
+    }
 
     func wireAutomations(_ automations: AutomationsViewModel) {
         self.automations = automations
     }
 
-    init(sessions: [TerminalSession] = []) {
-        self.sessions = sessions
+    init(
+        windowID: UUID = UUID(),
+        isMain: Bool = true,
+        sessions initialSessions: [TerminalSession] = [],
+        coordinator: WorkspaceCoordinator? = nil
+    ) {
+        self.windowID = windowID
+        let resolvedCoordinator = coordinator ?? .shared
+        self.coordinator = resolvedCoordinator
+        resolvedCoordinator.registerWindow(
+            id: windowID,
+            isMain: isMain,
+            sessions: initialSessions
+        )
+        self.layout = resolvedCoordinator.layout(for: windowID)
 
-        let group = TerminalGroup(
-            sessionIDs: sessions.map(\.id),
-            selectedSessionID: sessions.first?.id
-        )
-        self.layout = WorkspaceLayout(
-            root: .group(group),
-            focusedGroupID: group.id
-        )
+        resolvedCoordinator.objectWillChange
+            .sink { [weak self] _ in
+                guard let self else { return }
+                let nextLayout = resolvedCoordinator.layout(for: self.windowID)
+                if nextLayout != self.layout {
+                    self.layout = nextLayout
+                }
+                self.objectWillChange.send()
+            }
+            .store(in: &cancellables)
     }
 
     var selectedSession: TerminalSession? {
@@ -71,9 +99,10 @@ final class SessionsViewModel: ObservableObject {
             kind: .ssh(hostID: host.id, workingDirectory: remotePath),
             state: initialState,
             connectionMessage: connectionMessage,
-            encoding: TerminalEncodingResolver.fromProcessEnvironment()
+            encoding: TerminalEncodingResolver.fromProcessEnvironment(),
+            currentDirectory: remotePath
         )
-        sessions.append(session)
+        coordinator.appendSession(session)
         attachSession(session.id, to: layout.focusedGroupID)
     }
 
@@ -106,9 +135,10 @@ final class SessionsViewModel: ObservableObject {
             kind: .localShell(profileID: profile.id, workingDirectory: resolvedPath),
             state: .connected,
             encoding: TerminalEncodingResolver.fromProcessEnvironment(),
-            transcript: transcript
+            transcript: transcript,
+            currentDirectory: resolvedPath
         )
-        sessions.append(session)
+        coordinator.appendSession(session)
         attachSession(session.id, to: targetGroupID)
     }
 
@@ -175,6 +205,13 @@ final class SessionsViewModel: ObservableObject {
         }
     }
 
+    /// Re-reads this window's layout from the shared coordinator.
+    func syncLayoutFromCoordinator() {
+        let next = coordinator.layout(for: windowID)
+        guard next != layout else { return }
+        layout = next
+    }
+
     func close(_ sessionID: UUID, in groupID: UUID) {
         mutateLayout { layout in
             layout.root.updateGroup(id: groupID) { group in
@@ -186,6 +223,7 @@ final class SessionsViewModel: ObservableObject {
         }
 
         pruneUnreferencedSession(sessionID)
+        coordinator.closeWindowIfEmpty(windowID)
     }
 
     func close(_ session: TerminalSession) {
@@ -244,11 +282,113 @@ final class SessionsViewModel: ObservableObject {
                 connectionMessage: duplicateState == .connecting
                     ? "Connecting to \(source.title)…"
                     : nil,
-                encoding: source.encoding
+                encoding: source.encoding,
+                currentDirectory: source.currentDirectory
             )
-            sessions.append(duplicate)
+            coordinator.appendSession(duplicate)
             attachSession(duplicate.id, to: newGroup.id)
         }
+    }
+
+    func detachTab(sessionID: UUID, from groupID: UUID) {
+        coordinator.detachSession(
+            sessionID: sessionID,
+            fromWindowID: windowID,
+            fromGroupID: groupID
+        )
+        layout = coordinator.layout(for: windowID)
+    }
+
+    func attachTab(
+        fromWindow sourceWindowID: UUID,
+        sessionID: UUID,
+        to targetGroupID: UUID,
+        before targetSessionID: UUID? = nil
+    ) {
+        coordinator.attachSession(
+            sessionID: sessionID,
+            fromWindow: sourceWindowID,
+            toWindow: windowID,
+            toGroup: targetGroupID,
+            before: targetSessionID
+        )
+        layout = coordinator.layout(for: windowID)
+    }
+
+    func attachTabToNewSplit(
+        fromWindow sourceWindowID: UUID,
+        sessionID: UUID,
+        around targetGroupID: UUID,
+        placement: TerminalSplitPlacement
+    ) {
+        coordinator.attachSessionToNewSplit(
+            sessionID: sessionID,
+            fromWindow: sourceWindowID,
+            toWindow: windowID,
+            around: targetGroupID,
+            placement: placement
+        )
+        layout = coordinator.layout(for: windowID)
+    }
+
+    func handleTabDrop(
+        _ payload: TerminalTabDragPayload,
+        to targetGroupID: UUID,
+        before targetSessionID: UUID? = nil
+    ) {
+        if let sourceWindowID = payload.sourceWindowID, sourceWindowID != windowID {
+            attachTab(
+                fromWindow: sourceWindowID,
+                sessionID: payload.sessionID,
+                to: targetGroupID,
+                before: targetSessionID
+            )
+        } else {
+            moveTab(
+                sessionID: payload.sessionID,
+                to: targetGroupID,
+                before: targetSessionID
+            )
+        }
+    }
+
+    func handleSplitTabDrop(
+        _ payload: TerminalTabDragPayload,
+        around targetGroupID: UUID,
+        placement: TerminalSplitPlacement?
+    ) -> Bool {
+        if let sourceWindowID = payload.sourceWindowID, sourceWindowID != windowID {
+            if let placement {
+                attachTabToNewSplit(
+                    fromWindow: sourceWindowID,
+                    sessionID: payload.sessionID,
+                    around: targetGroupID,
+                    placement: placement
+                )
+            } else {
+                guard payload.sourceGroupID != targetGroupID else { return false }
+                attachTab(
+                    fromWindow: sourceWindowID,
+                    sessionID: payload.sessionID,
+                    to: targetGroupID
+                )
+            }
+            return true
+        }
+
+        if let placement {
+            moveTabToNewSplit(
+                sessionID: payload.sessionID,
+                from: payload.sourceGroupID,
+                around: targetGroupID,
+                placement: placement
+            )
+            return true
+        }
+
+        guard payload.sourceGroupID != targetGroupID else { return false }
+        moveTab(sessionID: payload.sessionID, to: targetGroupID)
+        return true
     }
 
     func moveTabToNewSplit(sessionID: UUID, from sourceGroupID: UUID, placement: TerminalSplitPlacement) {
@@ -364,52 +504,68 @@ final class SessionsViewModel: ObservableObject {
 
     func submitCommand(_ text: String, for sessionID: UUID) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              let index = sessions.firstIndex(where: { $0.id == sessionID }) else {
-            return
-        }
+        guard !trimmed.isEmpty, coordinator.session(for: sessionID) != nil else { return }
 
-        var session = sessions[index]
-        session.transcript.append(
-            TerminalLine(style: .command, text: commandPromptPrefix(for: session) + trimmed)
-        )
-
-        if let automations {
-            let clips = AutomationCaptureEngine.processText(
-                trimmed,
-                rules: automations.rules,
-                source: .commandInput,
-                sessionTitle: session.title
+        coordinator.updateSession(sessionID) { session in
+            session.transcript.append(
+                TerminalLine(style: .command, text: commandPromptPrefix(for: session) + trimmed)
             )
-            clips.forEach { automations.addCapturedClip($0) }
-        }
 
-        for line in mockOutput(for: trimmed, session: session) {
-            session.transcript.append(line)
-        }
+            if let automations {
+                let clips = AutomationCaptureEngine.processText(
+                    trimmed,
+                    rules: automations.rules,
+                    source: .commandInput,
+                    sessionTitle: session.title
+                )
+                clips.forEach { automations.addCapturedClip($0) }
+            }
 
-        sessions[index] = session
+            for line in mockOutput(for: trimmed, session: session) {
+                session.transcript.append(line)
+            }
+        }
     }
 
     static func preview() -> SessionsViewModel {
-        SessionsViewModel(sessions: PreviewData.sessions)
+        SessionsViewModel(
+            sessions: PreviewData.sessions,
+            coordinator: WorkspaceCoordinator()
+        )
     }
 
     func session(for id: UUID) -> TerminalSession? {
-        sessions.first { $0.id == id }
+        coordinator.session(for: id)
     }
 
     func updateTerminalGeometry(sessionID: UUID, columns: Int, rows: Int) {
-        guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
-        guard sessions[index].columns != columns || sessions[index].rows != rows else { return }
-        sessions[index].columns = columns
-        sessions[index].rows = rows
+        coordinator.updateSession(sessionID) { session in
+            guard session.columns != columns || session.rows != rows else { return }
+            session.columns = columns
+            session.rows = rows
+        }
     }
 
     func updateSessionEncoding(sessionID: UUID, encoding: String) {
-        guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
-        guard sessions[index].encoding != encoding else { return }
-        sessions[index].encoding = encoding
+        coordinator.updateSession(sessionID) { session in
+            guard session.encoding != encoding else { return }
+            session.encoding = encoding
+        }
+    }
+
+    func updateCurrentDirectory(sessionID: UUID, directory: String?) {
+        coordinator.updateSession(sessionID) { session in
+            let base = session.currentDirectory ?? session.effectiveDirectory
+            guard let normalized = DirectoryPathNormalizer.normalizeSessionPath(directory, relativeTo: base) else {
+                return
+            }
+            guard session.currentDirectory != normalized else { return }
+            session.currentDirectory = normalized
+        }
+    }
+
+    func reportDirectoryChange(sessionID: UUID, rawPath: String) {
+        updateCurrentDirectory(sessionID: sessionID, directory: rawPath)
     }
 
     func updateSessionState(
@@ -418,25 +574,162 @@ final class SessionsViewModel: ObservableObject {
         message: String? = nil,
         replacesMessage: Bool = false
     ) {
-        guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
-        var session = sessions[index]
-        session.state = state
-        if replacesMessage {
-            session.connectionMessage = message
+        coordinator.updateSession(sessionID) { session in
+            session.state = state
+            if replacesMessage {
+                session.connectionMessage = message
+            }
         }
-        sessions[index] = session
     }
 
     func noteSSHConnected(sessionID: UUID) {
-        guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
-        sessions[index].state = .connected
-        sessions[index].connectionMessage = nil
+        coordinator.updateSession(sessionID) { session in
+            session.state = .connected
+            session.connectionMessage = nil
+        }
+    }
+
+    func noteSSHReconnecting(sessionID: UUID, message: String) {
+        coordinator.updateSession(sessionID) { session in
+            session.state = .reconnecting
+            session.connectionMessage = message
+        }
     }
 
     func noteSSHFailure(sessionID: UUID, message: String) {
-        guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
-        sessions[index].state = .failed
-        sessions[index].connectionMessage = message
+        coordinator.updateSession(sessionID) { session in
+            session.state = .failed
+            session.connectionMessage = message
+        }
+    }
+
+    func updateClaudeSession(sessionID: UUID, _ update: (inout ClaudeSessionState) -> Void) {
+        coordinator.updateSession(sessionID) { session in
+            if session.claudeSession == nil {
+                session.claudeSession = ClaudeSessionState()
+            }
+            update(&session.claudeSession!)
+        }
+    }
+
+    func clearClaudeSession(sessionID: UUID) {
+        coordinator.updateSession(sessionID) { session in
+            session.claudeSession = nil
+        }
+    }
+
+    func updateGitRepoState(sessionID: UUID, _ update: (inout GitRepoState) -> Void) {
+        coordinator.updateSession(sessionID) { session in
+            if session.gitRepoState == nil {
+                session.gitRepoState = GitRepoState()
+            }
+            update(&session.gitRepoState!)
+        }
+    }
+
+    func processGitOSCEvent(_ event: String, data: String, sessionID: UUID) {
+        switch event {
+        case "no-repo":
+            coordinator.updateSession(sessionID) { session in
+                session.gitRepoState = nil
+            }
+        case "branch":
+            let branch = data.trimmingCharacters(in: .whitespacesAndNewlines)
+            updateGitRepoState(sessionID: sessionID) { state in
+                state.branch = branch.isEmpty ? nil : branch
+                state.isDetached = branch.isEmpty
+            }
+        case "status":
+            // format: "{staged}:{modified}:{untracked}"
+            let parts = data.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+            guard parts.count == 3 else { return }
+            updateGitRepoState(sessionID: sessionID) { state in
+                state.stagedCount    = Int(parts[0]) ?? 0
+                state.modifiedCount  = Int(parts[1]) ?? 0
+                state.untrackedCount = Int(parts[2]) ?? 0
+            }
+        case "ahead-behind":
+            // format: "{ahead}:{behind}"
+            let parts = data.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+            guard parts.count == 2 else { return }
+            updateGitRepoState(sessionID: sessionID) { state in
+                state.aheadCount  = Int(parts[0]) ?? 0
+                state.behindCount = Int(parts[1]) ?? 0
+            }
+        case "commit":
+            // format: "{hash}:{message}"
+            let colonIdx = data.firstIndex(of: ":")
+            guard let idx = colonIdx else { return }
+            let hash = String(data[data.startIndex..<idx]).trimmingCharacters(in: .whitespaces)
+            let message = String(data[data.index(after: idx)...]).trimmingCharacters(in: .whitespaces)
+            updateGitRepoState(sessionID: sessionID) { state in
+                state.lastCommitHash    = hash.isEmpty ? nil : hash
+                state.lastCommitMessage = message.isEmpty ? nil : message
+            }
+        default:
+            break
+        }
+    }
+
+    func processClaudeOSCEvent(_ event: String, data: String, sessionID: UUID) {
+        switch event {
+        case "active":
+            updateClaudeSession(sessionID: sessionID) { state in
+                if !state.isActive {
+                    state.isActive = true
+                    state.sessionStartedAt = state.sessionStartedAt ?? Date()
+                }
+                state.lastActivityAt = Date()
+            }
+        case "tool-start":
+            updateClaudeSession(sessionID: sessionID) { state in
+                state.isActive = true
+                state.currentTool = data.isEmpty ? nil : data
+                state.lastActivityAt = Date()
+                if state.sessionStartedAt == nil { state.sessionStartedAt = Date() }
+            }
+        case "tool-end":
+            updateClaudeSession(sessionID: sessionID) { state in
+                state.currentTool = nil
+                state.lastActivityAt = Date()
+            }
+        case "file-modified":
+            let path = data.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !path.isEmpty else { return }
+            updateClaudeSession(sessionID: sessionID) { state in
+                if !state.modifiedFiles.contains(path) {
+                    state.modifiedFiles.append(path)
+                }
+                state.lastActivityAt = Date()
+            }
+        case "cwd":
+            let dir = data.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !dir.isEmpty else { return }
+            updateClaudeSession(sessionID: sessionID) { state in
+                state.workingDirectory = dir
+            }
+        case "stop":
+            let cost = Double(data.trimmingCharacters(in: .whitespacesAndNewlines))
+            updateClaudeSession(sessionID: sessionID) { state in
+                state.isActive = false
+                state.currentTool = nil
+                state.estimatedCost = cost
+                state.lastActivityAt = Date()
+            }
+        default:
+            break
+        }
+    }
+
+    func retrySSHSession(sessionID: UUID) {
+        guard let session = coordinator.session(for: sessionID),
+              case .ssh = session.kind else { return }
+
+        coordinator.updateSession(sessionID) { session in
+            session.state = .connecting
+            session.connectionMessage = "Reconnecting…"
+        }
+        sshRetryRequest = SSHRetryRequest(id: UUID(), sessionID: sessionID)
     }
 
     private func commandPromptPrefix(for session: TerminalSession) -> String {
@@ -489,22 +782,22 @@ final class SessionsViewModel: ObservableObject {
     }
 
     private func pruneUnreferencedSession(_ sessionID: UUID) {
-        guard !layout.root.containsSession(sessionID) else { return }
-        sessions.removeAll { $0.id == sessionID }
-        TerminalViewPool.shared.remove(for: sessionID)
+        guard !coordinator.containsSession(sessionID) else { return }
+        coordinator.removeSession(sessionID)
     }
 
     /// Reassigns `layout` so `@Published` emits and SwiftUI picks up nested struct changes.
     private func mutateLayout(_ transform: (inout WorkspaceLayout) -> Void) {
-        var next = layout
-        transform(&next)
-        layout = next
+        coordinator.updateLayout(for: windowID, transform)
+        layout = coordinator.layout(for: windowID)
     }
 
     private func mutateLayoutReturning<T>(_ transform: (inout WorkspaceLayout) -> T) -> T {
-        var next = layout
-        let value = transform(&next)
-        layout = next
+        var value: T!
+        coordinator.updateLayout(for: windowID) { layout in
+            value = transform(&layout)
+        }
+        layout = coordinator.layout(for: windowID)
         return value
     }
 }

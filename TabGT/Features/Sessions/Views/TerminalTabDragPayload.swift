@@ -1,34 +1,44 @@
 import Foundation
 import CoreTransferable
 import UniformTypeIdentifiers
+#if os(macOS)
+import AppKit
+#endif
 
 struct TerminalTabDragPayload: Codable, Hashable, Transferable {
     var sessionID: UUID
     var sourceGroupID: UUID?
+    var sourceWindowID: UUID?
 
     static var transferRepresentation: some TransferRepresentation {
         CodableRepresentation(contentType: .json)
     }
 
     var encodedValue: NSString {
+        var parts = [sessionID.uuidString]
         if let sourceGroupID {
-            return "\(sessionID.uuidString)|\(sourceGroupID.uuidString)" as NSString
+            parts.append(sourceGroupID.uuidString)
         }
-        return sessionID.uuidString as NSString
+        if let sourceWindowID {
+            parts.append(sourceWindowID.uuidString)
+        }
+        return parts.joined(separator: "|") as NSString
     }
 
-    init(sessionID: UUID, sourceGroupID: UUID?) {
+    init(sessionID: UUID, sourceGroupID: UUID?, sourceWindowID: UUID? = nil) {
         self.sessionID = sessionID
         self.sourceGroupID = sourceGroupID
+        self.sourceWindowID = sourceWindowID
     }
 
     init?(string: String) {
-        let parts = string.split(separator: "|", maxSplits: 1).map(String.init)
-        guard !parts.isEmpty else { return nil }
-        guard let sessionID = UUID(uuidString: parts[0]) else { return nil }
+        let parts = string.split(separator: "|").map(String.init)
+        guard let first = parts.first else { return nil }
+        guard let sessionID = UUID(uuidString: first) else { return nil }
 
         self.sessionID = sessionID
         self.sourceGroupID = parts.count > 1 ? UUID(uuidString: parts[1]) : nil
+        self.sourceWindowID = parts.count > 2 ? UUID(uuidString: parts[2]) : nil
     }
 
     init?(item: NSSecureCoding?) {
@@ -66,3 +76,33 @@ enum TabDragDrop {
         return true
     }
 }
+
+#if os(macOS)
+final class TabDragPasteboardWriter: NSObject, NSPasteboardWriting {
+    let payload: TerminalTabDragPayload
+
+    init(payload: TerminalTabDragPayload) {
+        self.payload = payload
+    }
+
+    func writableTypes(for pasteboard: NSPasteboard) -> [NSPasteboard.PasteboardType] {
+        [
+            NSPasteboard.PasteboardType(UTType.json.identifier),
+            .string
+        ]
+    }
+
+    func pasteboardPropertyList(forType type: NSPasteboard.PasteboardType) -> Any? {
+        if type.rawValue == UTType.json.identifier,
+           let data = try? JSONEncoder().encode(payload) {
+            return data
+        }
+
+        if type == .string {
+            return payload.encodedValue as String
+        }
+
+        return nil
+    }
+}
+#endif

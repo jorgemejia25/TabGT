@@ -1,14 +1,29 @@
+import AppKit
 import SwiftUI
 
 @main
 struct TabGTApp: App {
     init() {
-        SSHAskPassHelper.cleanup()
+        // Askpass and key temp files are recreated on demand with stable paths.
+        // Avoid deleting them here — SwiftUI can re-run App.init while sessions
+        // are still alive in debug builds, leaving SSH_ASKPASS pointing at removed files.
+        registerTerminationCleanup()
+    }
+
+    private func registerTerminationCleanup() {
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            SSHAskPassHelper.cleanup()
+            SSHPrivateKeyHelper.cleanup()
+        }
     }
 
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        WindowGroup(id: "main") {
+            ContentView(windowRole: .main)
         }
         .windowStyle(.hiddenTitleBar)
         .windowBackgroundDragBehavior(.enabled)
@@ -23,6 +38,13 @@ struct TabGTApp: App {
                     KeybindingActionRouter.shared.perform(.closeActiveTab)
                 }
                 .keyboardShortcut("w", modifiers: .command)
+
+                Divider()
+
+                Button("Move to New Window") {
+                    KeybindingActionRouter.shared.perform(.moveToNewWindow)
+                }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
 
                 Divider()
 
@@ -80,5 +102,14 @@ struct TabGTApp: App {
                 .keyboardShortcut(",", modifiers: .command)
             }
         }
+
+        WindowGroup(id: "detached", for: DetachedWindowPayload.self) { $payload in
+            if let payload {
+                ContentView(windowRole: .detached(payload))
+            }
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowBackgroundDragBehavior(.enabled)
+        .defaultSize(width: 900, height: 600)
     }
 }

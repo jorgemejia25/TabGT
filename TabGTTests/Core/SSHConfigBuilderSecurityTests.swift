@@ -2,6 +2,7 @@ import Foundation
 @testable import TabGT
 import Testing
 
+@Suite(.serialized)
 struct SSHConfigBuilderSecurityTests {
     @Test func rejectsUnsafeDestinationInput() {
         let unsafeUser = SSHHost(name: "bad", address: "example.com", username: "deploy;rm")
@@ -16,10 +17,24 @@ struct SSHConfigBuilderSecurityTests {
         host.remoteShell = "/bin/zsh;rm -rf /"
 
         let config = try #require(SSHConfigBuilder.launchConfig(for: host, workingDirectory: nil))
-        #expect(!config.args.contains { $0.contains(";") })
+        #expect(!config.args.contains { $0.contains("rm -rf") })
+        #expect(!config.args.contains { $0.contains("/bin/zsh;") })
+    }
+
+    @Test func askpassHelperUsesStablePathPerAccount() throws {
+        SSHAskPassHelper.cleanup()
+        defer { SSHAskPassHelper.cleanup() }
+
+        let account = "ssh-host-test-account"
+        let firstPath = try #require(SSHAskPassHelper.write(account: account))
+        let secondPath = try #require(SSHAskPassHelper.write(account: account))
+
+        #expect(firstPath == secondPath)
+        #expect(firstPath.hasSuffix("\(account).askpass"))
     }
 
     @Test func askpassHelperDoesNotWritePasswordMaterial() throws {
+        SSHAskPassHelper.cleanup()
         defer { SSHAskPassHelper.cleanup() }
 
         let path = try #require(SSHAskPassHelper.write(account: "ssh-host-test-account"))

@@ -80,6 +80,8 @@ final class KeybindingMonitorView: NSView {
     }
 
     private func shouldHandle(_ event: NSEvent) -> Bool {
+        guard window == NSApp.keyWindow else { return false }
+
         guard event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty == false else {
             return false
         }

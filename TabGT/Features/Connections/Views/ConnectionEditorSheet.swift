@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ConnectionEditorSheet: View {
@@ -14,6 +15,8 @@ struct ConnectionEditorSheet: View {
     @State private var port: String
     @State private var authMethod: ConnectionAuthMethod
     @State private var privateKeyPath: String
+    @State private var privateKeyInputMode: PrivateKeyInputMode
+    @State private var privateKeyPEM: String
     @State private var password: String
     @State private var startupFolders: [StartupFolder]
     @State private var defaultFolderID: UUID?
@@ -43,6 +46,8 @@ struct ConnectionEditorSheet: View {
         _port = State(initialValue: formState.port)
         _authMethod = State(initialValue: formState.authMethod)
         _privateKeyPath = State(initialValue: formState.privateKeyPath)
+        _privateKeyInputMode = State(initialValue: formState.privateKeyInputMode)
+        _privateKeyPEM = State(initialValue: formState.privateKeyPEM)
         _password = State(initialValue: formState.password)
         _startupFolders = State(initialValue: formState.startupFolders)
         _defaultFolderID = State(initialValue: formState.defaultFolderID)
@@ -87,11 +92,49 @@ struct ConnectionEditorSheet: View {
                         }
 
                         if authMethod == .privateKey {
-                            fieldRow("Private key path") {
-                                compactTextField(text: $privateKeyPath)
-                                Button("Browse") {}
-                                    .font(.system(size: 12, weight: .medium))
-                                    .buttonStyle(.plainClickable)
+                            fieldRow("Key source") {
+                                Picker("", selection: $privateKeyInputMode) {
+                                    ForEach(PrivateKeyInputMode.allCases) { mode in
+                                        Text(mode.label).tag(mode)
+                                    }
+                                }
+                                .labelsHidden()
+                                .pickerStyle(.menu)
+                                .frame(maxWidth: 220, alignment: .leading)
+                            }
+
+                            switch privateKeyInputMode {
+                            case .filePath:
+                                fieldRow("Private key path") {
+                                    compactTextField(text: $privateKeyPath)
+                                    Button("Browse") { browsePrivateKey() }
+                                        .font(.system(size: 12, weight: .medium))
+                                        .buttonStyle(.plainClickable)
+                                }
+                            case .pastedPEM:
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Private key")
+                                        .font(.system(size: 12, weight: .regular))
+                                        .foregroundStyle(AppTheme.textSecondary)
+                                        .padding(.leading, 138)
+
+                                    TextEditor(text: $privateKeyPEM)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundStyle(AppTheme.textPrimary)
+                                        .scrollContentBackground(.hidden)
+                                        .padding(8)
+                                        .frame(maxWidth: .infinity, minHeight: 96, maxHeight: 120)
+                                        .background(AppTheme.editor)
+                                        .overlay(
+                                            Rectangle()
+                                                .stroke(AppTheme.panelStroke, lineWidth: 1)
+                                        )
+                                        .padding(.leading, 138)
+                                }
+                                Text("Paste the full PEM block. Stored securely in Keychain.")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(AppTheme.textTertiary)
+                                    .padding(.leading, 138)
                             }
                         }
 
@@ -169,7 +212,7 @@ struct ConnectionEditorSheet: View {
 
             sheetFooter
         }
-        .frame(width: 620, height: 560)
+        .frame(width: 620, height: 600)
         .background(AppTheme.current.windowBackground)
     }
 
@@ -240,6 +283,8 @@ struct ConnectionEditorSheet: View {
         var port = "22"
         var authMethod = ConnectionAuthMethod.privateKey
         var privateKeyPath = "~/.ssh/id_ed25519"
+        var privateKeyInputMode = PrivateKeyInputMode.filePath
+        var privateKeyPEM = ""
         var password = ""
         var startupFolders: [StartupFolder] = []
         var defaultFolderID: UUID?
@@ -267,7 +312,14 @@ struct ConnectionEditorSheet: View {
                 }
             case .privateKey:
                 state.authMethod = .privateKey
-                state.privateKeyPath = credentialRef.label
+                if let account = credentialRef.keychainAccount,
+                   SSHCredentialStorage.containsPassword(account: account) {
+                    state.privateKeyInputMode = .pastedPEM
+                    state.privateKeyPEM = SSHCredentialStorage.readPassword(account: account) ?? ""
+                } else {
+                    state.privateKeyInputMode = .filePath
+                    state.privateKeyPath = credentialRef.label
+                }
             case .agent:
                 state.authMethod = .sshConfigAlias
             }
@@ -320,6 +372,17 @@ struct ConnectionEditorSheet: View {
                 return
             }
         }
+        if authMethod == .privateKey, privateKeyInputMode == .pastedPEM {
+            let trimmedPEM = privateKeyPEM.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedPEM.isEmpty else {
+                validationMessage = "Private key content is required."
+                return
+            }
+            guard SSHPrivateKeyHelper.isValidPEM(trimmedPEM) else {
+                validationMessage = "Private key must be PEM format (BEGIN … PRIVATE KEY)."
+                return
+            }
+        }
 
         var saved = host ?? SSHHost(
             name: trimmedName,
@@ -364,12 +427,47 @@ struct ConnectionEditorSheet: View {
                 keychainAccount: keychainAccount
             )
         case .privateKey:
+            let credentialID = self.host?.credentialRef?.id ?? UUID()
+
             if let previousAccount = self.host?.credentialRef?.keychainAccount,
                self.host?.credentialRef?.kind == .password {
                 SSHCredentialStorage.deletePassword(account: previousAccount)
             }
-            let trimmedPath = privateKeyPath.trimmingCharacters(in: .whitespacesAndNewlines)
-            return CredentialRef(kind: .privateKey, label: trimmedPath.isEmpty ? "~/.ssh/id_ed25519" : trimmedPath)
+
+            switch privateKeyInputMode {
+            case .filePath:
+                if let previousAccount = self.host?.credentialRef?.keychainAccount,
+                   self.host?.credentialRef?.kind == .privateKey {
+                    SSHCredentialStorage.deletePassword(account: previousAccount)
+                    SSHPrivateKeyHelper.removeKeyFile(account: previousAccount)
+                }
+
+                let trimmedPath = privateKeyPath.trimmingCharacters(in: .whitespacesAndNewlines)
+                return CredentialRef(
+                    id: credentialID,
+                    kind: .privateKey,
+                    label: trimmedPath.isEmpty ? "~/.ssh/id_ed25519" : trimmedPath
+                )
+
+            case .pastedPEM:
+                let keychainAccount = self.host?.credentialRef?.keychainAccount
+                    ?? SSHCredentialStorage.keychainAccount(forHostID: host.id, credentialID: credentialID)
+                let trimmedPEM = privateKeyPEM.trimmingCharacters(in: .whitespacesAndNewlines)
+
+                do {
+                    try SSHCredentialStorage.savePassword(trimmedPEM, account: keychainAccount)
+                } catch {
+                    validationMessage = "Could not store private key in Keychain."
+                    return nil
+                }
+
+                return CredentialRef(
+                    id: credentialID,
+                    kind: .privateKey,
+                    label: "Inline private key",
+                    keychainAccount: keychainAccount
+                )
+            }
         case .sshConfigAlias:
             if let previousAccount = self.host?.credentialRef?.keychainAccount,
                self.host?.credentialRef?.kind == .password {
@@ -430,6 +528,26 @@ struct ConnectionEditorSheet: View {
             )
     }
 
+    private func browsePrivateKey() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        panel.message = "Choose private key file"
+        panel.prompt = "Choose"
+
+        let sshDirectory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".ssh", isDirectory: true)
+        if FileManager.default.fileExists(atPath: sshDirectory.path) {
+            panel.directoryURL = sshDirectory
+        }
+
+        if panel.runModal() == .OK, let url = panel.url {
+            privateKeyPath = url.path
+        }
+    }
+
     private func compactSecureField(text: Binding<String>) -> some View {
         SecureField("", text: text)
             .textFieldStyle(.plain)
@@ -442,6 +560,22 @@ struct ConnectionEditorSheet: View {
                 Rectangle()
                     .stroke(AppTheme.panelStroke, lineWidth: 1)
             )
+    }
+}
+
+enum PrivateKeyInputMode: String, CaseIterable, Identifiable {
+    case filePath
+    case pastedPEM
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .filePath:
+            return "Key file"
+        case .pastedPEM:
+            return "Paste PEM"
+        }
     }
 }
 

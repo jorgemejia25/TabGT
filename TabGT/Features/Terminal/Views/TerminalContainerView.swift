@@ -45,7 +45,7 @@ struct TerminalContainerView: View {
             )
         } else if let host = connections.host(for: session),
                   let launchConfig = connections.sshLaunchConfig(for: session) {
-            ZStack(alignment: .top) {
+            ZStack {
                 SSHTerminalView(
                     session: session,
                     host: host,
@@ -55,7 +55,11 @@ struct TerminalContainerView: View {
                     inputBridge: inputBridge
                 )
 
-                SSHConnectionStatusOverlay(session: session)
+                if session.state != .connected {
+                    SSHConnectionStatusOverlay(session: session) {
+                        sessions.retrySSHSession(sessionID: session.id)
+                    }
+                }
             }
         } else {
             missingHostView

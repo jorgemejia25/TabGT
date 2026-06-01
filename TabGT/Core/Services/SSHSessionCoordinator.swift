@@ -3,32 +3,43 @@ import SwiftTerm
 
 /// Tracks SSH handshake output and process lifecycle for a single terminal session.
 @MainActor
-final class SSHSessionCoordinator: NSObject, LocalProcessTerminalViewDelegate {
+final class SSHSessionCoordinator: TerminalMetricsCoordinator {
     private enum Phase {
         case handshake
         case connected
         case failed
     }
 
-    private let sessionID: UUID
     private let host: SSHHost
-    private weak var sessions: SessionsViewModel?
+    private let launchConfig: SSHLaunchConfig
 
-    var terminalView: TabGTTerminalView?
-    var lastRequestID: UUID?
+    var lastRetryRequestID: UUID?
+    var onInputDeliveryReady: (() -> Void)?
 
     private var phase: Phase = .handshake
     private var outputBuffer = ""
     private var timeoutTask: Task<Void, Never>?
+    private var attemptNumber = 1
+    private var ignoreNextTermination = false
 
-    init(sessionID: UUID, host: SSHHost, sessions: SessionsViewModel) {
-        self.sessionID = sessionID
+    private var maxAttempts: Int {
+        SSHConnectionSettings.retriesEnabled ? SSHConnectionSettings.maxRetries : 1
+    }
+
+    init(
+        sessionID: UUID,
+        host: SSHHost,
+        launchConfig: SSHLaunchConfig,
+        sessions: SessionsViewModel
+    ) {
         self.host = host
-        self.sessions = sessions
-        super.init()
+        self.launchConfig = launchConfig
+        super.init(sessionID: sessionID, sessions: sessions)
+        setInputDeliveryReady(false)
         startTimeoutWatchdog()
     }
 
+    @MainActor
     deinit {
         timeoutTask?.cancel()
     }
@@ -42,7 +53,7 @@ final class SSHSessionCoordinator: NSObject, LocalProcessTerminalViewDelegate {
         }
 
         if let message = SSHConnectionDiagnostics.parseError(from: outputBuffer, host: host) {
-            markFailed(message)
+            handleHandshakeFailure(message)
             return
         }
 
@@ -51,15 +62,12 @@ final class SSHSessionCoordinator: NSObject, LocalProcessTerminalViewDelegate {
         }
     }
 
-    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
-        sessions?.updateTerminalGeometry(sessionID: sessionID, columns: newCols, rows: newRows)
-    }
+    override func processTerminated(source: TerminalView, exitCode: Int32?) {
+        if ignoreNextTermination {
+            ignoreNextTermination = false
+            return
+        }
 
-    func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
-
-    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
-
-    func processTerminated(source: TerminalView, exitCode: Int32?) {
         timeoutTask?.cancel()
 
         guard let exitCode else {
@@ -75,7 +83,7 @@ final class SSHSessionCoordinator: NSObject, LocalProcessTerminalViewDelegate {
         switch phase {
         case .handshake:
             let message = SSHConnectionDiagnostics.message(forExitCode: exitCode, host: host)
-            markFailed(message)
+            handleHandshakeFailure(message)
         case .connected:
             sessions?.updateSessionState(
                 sessionID: sessionID,
@@ -88,19 +96,107 @@ final class SSHSessionCoordinator: NSObject, LocalProcessTerminalViewDelegate {
         }
     }
 
-    func publishInitialGeometry(from source: TabGTTerminalView) {
-        sizeChanged(
-            source: source,
-            newCols: source.terminal.cols,
-            newRows: source.terminal.rows
+    /// User-initiated retry from the connection panel.
+    func retryConnection() {
+        attemptNumber = 1
+        outputBuffer = ""
+        phase = .handshake
+        setInputDeliveryReady(false)
+        timeoutTask?.cancel()
+        startTimeoutWatchdog()
+        sessions?.noteSSHReconnecting(
+            sessionID: sessionID,
+            message: SSHConnectionDiagnostics.connectingMessage(for: host)
         )
+        relaunchSSHProcess()
+    }
+
+    func finishConnectionMonitoring() {
+        // Handshake monitoring stops via `phase`; keep the callback for retries.
     }
 
     private func markConnected() {
         guard phase == .handshake else { return }
         phase = .connected
+        attemptNumber = 1
         timeoutTask?.cancel()
+        finishConnectionMonitoring()
         sessions?.noteSSHConnected(sessionID: sessionID)
+        Task { @MainActor in
+            await probeWorkingDirectoryIfNeeded()
+            if isWindowsRemoteShell {
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+            setInputDeliveryReady(true)
+            onInputDeliveryReady?()
+        }
+    }
+
+    private var isWindowsRemoteShell: Bool {
+        if let shell = host.remoteShell,
+           SSHInputValidator.isWindowsRemoteShell(shell) {
+            return true
+        }
+
+        guard let session = sessions?.session(for: sessionID),
+              let directory = session.kind.workingDirectory else {
+            return false
+        }
+
+        return SSHConfigBuilder.isWindowsPath(directory)
+    }
+
+    private func probeWorkingDirectoryIfNeeded() async {
+        guard let sessions,
+              let session = sessions.session(for: sessionID),
+              session.effectiveDirectory == nil else {
+            return
+        }
+
+        let lister = SSHDirectoryLister(host: host)
+        guard let pwd = try? await lister.currentWorkingDirectory() else { return }
+        sessions.updateCurrentDirectory(sessionID: sessionID, directory: pwd)
+    }
+
+    private func handleHandshakeFailure(_ message: String) {
+        guard phase != .failed else { return }
+
+        if SSHConnectionSettings.retriesEnabled, attemptNumber < maxAttempts {
+            scheduleRetry(afterFailure: message)
+            return
+        }
+
+        markFailed(message)
+    }
+
+    private func scheduleRetry(afterFailure message: String) {
+        attemptNumber += 1
+        outputBuffer = ""
+        phase = .handshake
+        setInputDeliveryReady(false)
+        timeoutTask?.cancel()
+        startTimeoutWatchdog()
+
+        sessions?.noteSSHReconnecting(
+            sessionID: sessionID,
+            message: SSHConnectionDiagnostics.reconnectingMessage(
+                attempt: attemptNumber,
+                maxAttempts: maxAttempts,
+                host: host
+            )
+        )
+
+        relaunchSSHProcess()
+    }
+
+    private func relaunchSSHProcess() {
+        ignoreNextTermination = true
+        let extraEnvironment = SSHConfigBuilder.refreshedExtraEnvironment(for: host, from: launchConfig)
+        terminalView?.relaunchProcess(
+            executable: SSHConfigBuilder.sshPath,
+            args: launchConfig.args,
+            extraEnvironment: extraEnvironment
+        )
     }
 
     private func markFailed(_ message: String) {
@@ -115,7 +211,7 @@ final class SSHSessionCoordinator: NSObject, LocalProcessTerminalViewDelegate {
         timeoutTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(gracePeriod))
             guard let self, phase == .handshake else { return }
-            markFailed(SSHConnectionDiagnostics.timeoutMessage(for: host))
+            handleHandshakeFailure(SSHConnectionDiagnostics.timeoutMessage(for: host))
         }
     }
 }

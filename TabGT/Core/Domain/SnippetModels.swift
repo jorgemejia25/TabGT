@@ -8,6 +8,8 @@ struct SnippetDraft: Hashable {
     var tags: String = ""
     var notes: String = ""
     var autoTriggerEnabled: Bool = true
+    var launchMode: SnippetLaunchMode = .currentTab
+    var startupFolderID: UUID?
 
     var isEditing: Bool { id != nil }
 
@@ -20,6 +22,8 @@ struct SnippetDraft: Hashable {
         tags = snippet.tags.joined(separator: ", ")
         notes = snippet.notes
         autoTriggerEnabled = false
+        launchMode = snippet.launchMode
+        startupFolderID = snippet.startupFolderID
     }
 
     func asSnippet() -> CommandSnippet {
@@ -32,7 +36,9 @@ struct SnippetDraft: Hashable {
                 .split(separator: ",")
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty },
-            notes: notes.trimmingCharacters(in: .whitespacesAndNewlines)
+            notes: notes.trimmingCharacters(in: .whitespacesAndNewlines),
+            launchMode: launchMode,
+            startupFolderID: startupFolderID
         )
     }
 

@@ -16,6 +16,11 @@ enum SSHPreflightValidator {
 
         switch credential.kind {
         case .privateKey:
+            if let account = credential.keychainAccount,
+               SSHCredentialStorage.containsPassword(account: account) {
+                break
+            }
+
             let keyPath = (credential.label as NSString).expandingTildeInPath
             guard FileManager.default.fileExists(atPath: keyPath) else {
                 return .privateKeyNotFound(path: keyPath)
@@ -66,6 +71,14 @@ enum SSHConnectionDiagnostics {
 
     static func timeoutMessage(for host: SSHHost) -> String {
         "Connection timed out after \(connectTimeoutSeconds)s while reaching \(host.displayAddress). Check the host, port, firewall, and network."
+    }
+
+    static func reconnectingMessage(attempt: Int, maxAttempts: Int, host: SSHHost) -> String {
+        "Reconnecting to \(host.displayAddress) (attempt \(attempt) of \(maxAttempts))…"
+    }
+
+    static func retryFailedMessage(attempt: Int, maxAttempts: Int, host: SSHHost, reason: String) -> String {
+        "Attempt \(attempt) of \(maxAttempts) to \(host.displayAddress) failed: \(reason)"
     }
 
     /// Returns a user-facing message when OpenSSH output matches a known failure.
@@ -123,25 +136,55 @@ enum SSHConnectionDiagnostics {
             return "SSH handshake failed with \(host.displayAddress). The server may be blocking the connection."
         }
 
+        if normalized.contains("connection to") && normalized.contains("closed") {
+            return "SSH connected to \(host.displayAddress) but the session closed immediately. Check the startup folder and remote shell in connection settings, or verify the server allows interactive login shells."
+        }
+
         return nil
     }
 
     /// Heuristic for the first successful bytes from an interactive remote shell.
     static func looksConnected(_ output: String) -> Bool {
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count >= 24 else { return false }
+        guard trimmed.count >= 8 else { return false }
 
         let normalized = trimmed.lowercased()
         if normalized.contains("last login:") { return true }
         if normalized.contains("welcome to") { return true }
+        if normalized.contains("microsoft windows") { return true }
 
         let lines = trimmed.split(whereSeparator: \.isNewline).map(String.init)
         if let lastLine = lines.last?.trimmingCharacters(in: .whitespacesAndNewlines),
-           lastLine.hasSuffix("$") || lastLine.hasSuffix("#") || lastLine.hasSuffix("%") {
+           looksLikeInteractivePrompt(lastLine) {
             return true
         }
 
         return trimmed.count >= 96 && parseError(from: output, host: placeholderHost) == nil
+    }
+
+    /// Detects Unix and Windows shell prompts after SSH lands in an interactive session.
+    static func looksLikeInteractivePrompt(_ line: String) -> Bool {
+        guard !line.isEmpty else { return false }
+
+        if line.hasSuffix("$") || line.hasSuffix("#") || line.hasSuffix("%") {
+            return true
+        }
+
+        // PowerShell: PS C:\Users\dev>
+        if line.hasPrefix("PS ") && line.hasSuffix(">") {
+            return true
+        }
+
+        // cmd.exe: C:\Users\dev>
+        if line.hasSuffix(">"),
+           line.range(
+               of: #"^[A-Za-z]:[\\/].*?>$"#,
+               options: .regularExpression
+           ) != nil {
+            return true
+        }
+
+        return false
     }
 
     private static let placeholderHost = SSHHost(

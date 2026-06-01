@@ -3,8 +3,12 @@ import Testing
 
 @MainActor
 struct SessionsViewModelProfileTests {
+    private func makeViewModel() -> SessionsViewModel {
+        SessionsViewModel(coordinator: WorkspaceCoordinator())
+    }
+
     @Test func openLocalSessionAlwaysCreatesNewTab() {
-        let viewModel = SessionsViewModel()
+        let viewModel = makeViewModel()
         let profile = LocalProfileSeeds.profiles().first!
 
         viewModel.openLocalSession(profile: profile)
@@ -15,7 +19,7 @@ struct SessionsViewModelProfileTests {
     }
 
     @Test func openSSHSessionAlwaysCreatesNewTab() {
-        let viewModel = SessionsViewModel()
+        let viewModel = makeViewModel()
         let host = PreviewData.hosts[0]
 
         viewModel.openSSHSession(for: host)
@@ -26,7 +30,7 @@ struct SessionsViewModelProfileTests {
     }
 
     @Test func openLocalSessionStoresWorkingDirectory() {
-        let viewModel = SessionsViewModel()
+        let viewModel = makeViewModel()
         let profile = LocalProfileSeeds.profiles().first!
         let folder = StartupFolder(name: "Home", path: "~")
 
@@ -46,7 +50,7 @@ struct SessionsViewModelProfileTests {
     }
 
     @Test func openSSHSessionStoresRemotePath() {
-        let viewModel = SessionsViewModel()
+        let viewModel = makeViewModel()
         let host = PreviewData.hosts[0]
         let folder = StartupFolder(name: "Workspace", path: "~/workspace")
 

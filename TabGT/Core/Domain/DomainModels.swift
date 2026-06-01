@@ -54,6 +54,69 @@ struct CommandSnippet: Identifiable, Hashable, Codable {
     var command: String
     var tags: [String] = []
     var notes: String = ""
+    var launchMode: SnippetLaunchMode = .currentTab
+    /// When `launchMode` is `.newTabCopy`, opens the duplicate tab in this profile folder.
+    /// `nil` uses the profile or host default startup folder.
+    var startupFolderID: UUID?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, trigger, command, tags, notes, launchMode, startupFolderID
+    }
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        trigger: String,
+        command: String,
+        tags: [String] = [],
+        notes: String = "",
+        launchMode: SnippetLaunchMode = .currentTab,
+        startupFolderID: UUID? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.trigger = trigger
+        self.command = command
+        self.tags = tags
+        self.notes = notes
+        self.launchMode = launchMode
+        self.startupFolderID = startupFolderID
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        title = try container.decode(String.self, forKey: .title)
+        trigger = try container.decode(String.self, forKey: .trigger)
+        command = try container.decode(String.self, forKey: .command)
+        tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
+        notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        launchMode = try container.decodeIfPresent(SnippetLaunchMode.self, forKey: .launchMode) ?? .currentTab
+        startupFolderID = try container.decodeIfPresent(UUID.self, forKey: .startupFolderID)
+    }
+}
+
+enum SnippetLaunchMode: String, CaseIterable, Hashable, Codable {
+    case currentTab
+    case newTabCopy
+
+    var label: String {
+        switch self {
+        case .currentTab:
+            return "Current tab"
+        case .newTabCopy:
+            return "New tab copy"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .currentTab:
+            return "Insert or run in the active terminal tab."
+        case .newTabCopy:
+            return "Open a copy of the active tab, then run the command."
+        }
+    }
 }
 
 struct AppSettings: Hashable {
@@ -127,6 +190,22 @@ struct TerminalSession: Identifiable, Hashable {
     var rows: Int = 32
     var encoding: String = "UTF-8"
     var transcript: [TerminalLine] = []
+    /// Live working directory reported by the shell (OSC 7) or initialized at session open.
+    var currentDirectory: String?
+    /// Claude Code session state, populated when hooks are installed on the remote host.
+    var claudeSession: ClaudeSessionState?
+    /// Git repo state for the current working directory, populated via PROMPT_COMMAND OSC sequences.
+    var gitRepoState: GitRepoState?
+}
+
+extension TerminalSession {
+    /// Best-known directory for workspace browsing: live CWD, then startup path.
+    var effectiveDirectory: String? {
+        if let currentDirectory, !currentDirectory.isEmpty {
+            return currentDirectory
+        }
+        return kind.workingDirectory
+    }
 }
 
 enum TerminalSplitAxis: String, CaseIterable, Hashable {

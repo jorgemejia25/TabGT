@@ -3,6 +3,7 @@ import SwiftUI
 struct NavigatorSidebar: View {
     @ObservedObject var connections: ConnectionsViewModel
     @ObservedObject var terminalProfiles: TerminalProfilesViewModel
+    @Binding var destination: RootDestination
 
     var onOpenHost: (SSHHost, StartupFolder?) -> Void
     var onOpenLocalProfile: (LocalTerminalProfile, StartupFolder?) -> Void
@@ -63,7 +64,7 @@ struct NavigatorSidebar: View {
                             LocalProfileRow(
                                 profile: profile,
                                 onOpen: { folder in
-                                    onOpenLocalProfile(profile, folder)
+                                    openLocal(profile, folder: folder)
                                 },
                                 onEdit: { onEditLocalProfile(profile) }
                             )
@@ -78,6 +79,8 @@ struct NavigatorSidebar: View {
             .frame(maxWidth: .infinity)
 
             Spacer(minLength: 0)
+
+            navLinksSection
 
             HStack(spacing: 12) {
                 Button(action: onNewProfile) {
@@ -111,9 +114,52 @@ struct NavigatorSidebar: View {
             }
     }
 
+    private var navLinksSection: some View {
+        VStack(spacing: 1) {
+            navLink("Snippets", systemImage: "text.word.spacing", dest: .snippets)
+            navLink("Automations", systemImage: "bolt.fill", dest: .automations)
+            navLink("Settings", systemImage: "gearshape", dest: .settings)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+        .overlay(alignment: .top) {
+            Rectangle().fill(AppTheme.splitSash).frame(height: 1)
+        }
+    }
+
+    private func navLink(_ title: String, systemImage: String, dest: RootDestination) -> some View {
+        Button {
+            destination = dest
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(width: 16, alignment: .center)
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                Spacer()
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .foregroundStyle(destination == dest ? AppTheme.onSelectionText : AppTheme.textSecondary)
+            .background(
+                destination == dest ? AppTheme.selectionBlue : Color.clear,
+                in: RoundedRectangle(cornerRadius: 5, style: .continuous)
+            )
+        }
+        .buttonStyle(.plainClickable)
+    }
+
     private func open(_ host: SSHHost, folder: StartupFolder?) {
         connections.select(host)
+        destination = .terminal
         onOpenHost(host, folder)
+    }
+
+    private func openLocal(_ profile: LocalTerminalProfile, folder: StartupFolder?) {
+        destination = .terminal
+        onOpenLocalProfile(profile, folder)
     }
 }
 

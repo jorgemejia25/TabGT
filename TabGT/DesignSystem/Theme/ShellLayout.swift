@@ -5,6 +5,9 @@ enum ShellLayout {
     /// Main window toolbar (matches navigator traffic-light strip).
     static let toolbarHeight: CGFloat = 44
 
+    /// Horizontal space reserved under the traffic lights when the sidebar is hidden.
+    static let trafficLightClearanceWidth: CGFloat = 76
+
     /// Editor tab bar, inspector title bar, and equivalent secondary headers.
     static let panelHeaderHeight: CGFloat = 35
 

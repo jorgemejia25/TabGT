@@ -3,8 +3,12 @@ import Testing
 
 @MainActor
 struct SessionsViewModelTerminalMetricsTests {
+    private func makeViewModel() -> SessionsViewModel {
+        SessionsViewModel(coordinator: WorkspaceCoordinator())
+    }
+
     @Test func updateTerminalGeometryMutatesMatchingSession() {
-        let viewModel = SessionsViewModel()
+        let viewModel = makeViewModel()
         let profile = LocalProfileSeeds.profiles().first!
         viewModel.openLocalSession(profile: profile)
 
@@ -21,7 +25,7 @@ struct SessionsViewModelTerminalMetricsTests {
     }
 
     @Test func updateTerminalGeometrySkipsWhenUnchanged() {
-        let viewModel = SessionsViewModel()
+        let viewModel = makeViewModel()
         let profile = LocalProfileSeeds.profiles().first!
         viewModel.openLocalSession(profile: profile)
 
@@ -40,7 +44,7 @@ struct SessionsViewModelTerminalMetricsTests {
     }
 
     @Test func updateTerminalGeometryDoesNotAffectOtherSessions() {
-        let viewModel = SessionsViewModel()
+        let viewModel = makeViewModel()
         let profile = LocalProfileSeeds.profiles().first!
         viewModel.openLocalSession(profile: profile)
         viewModel.openLocalSession(profile: profile)
@@ -62,7 +66,7 @@ struct SessionsViewModelTerminalMetricsTests {
     }
 
     @Test func updateSessionEncodingMutatesMatchingSession() {
-        let viewModel = SessionsViewModel()
+        let viewModel = makeViewModel()
         let profile = LocalProfileSeeds.profiles().first!
         viewModel.openLocalSession(profile: profile)
 

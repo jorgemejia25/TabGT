@@ -25,9 +25,12 @@ struct TerminalGroupView: View {
                 .overlay {
                     splitDropLayer
                 }
+                .simultaneousGesture(
+                    TapGesture().onEnded {
+                        viewModel.focusGroup(group.id)
+                    }
+                )
         }
-        .contentShape(Rectangle())
-        .onTapGesture { viewModel.focusGroup(group.id) }
     }
 
     @ViewBuilder
@@ -109,20 +112,7 @@ struct TerminalGroupView: View {
         payload: TerminalTabDragPayload,
         placement: TerminalSplitPlacement?
     ) -> Bool {
-        if let placement {
-            viewModel.moveTabToNewSplit(
-                sessionID: payload.sessionID,
-                from: payload.sourceGroupID,
-                around: group.id,
-                placement: placement
-            )
-            return true
-        }
-
-        guard payload.sourceGroupID != group.id else { return false }
-
-        viewModel.moveTab(sessionID: payload.sessionID, to: group.id)
-        return true
+        viewModel.handleSplitTabDrop(payload, around: group.id, placement: placement)
     }
 }
 

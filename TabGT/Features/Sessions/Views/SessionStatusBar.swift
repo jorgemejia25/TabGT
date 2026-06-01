@@ -11,6 +11,21 @@ struct SessionStatusBar: View {
             Text(sessionKindLabel)
                 .foregroundStyle(TerminalTheme.dim)
 
+            if let git = session.gitRepoState {
+                separator
+
+                Label(git.isDetached ? "HEAD" : (git.branch ?? "—"), systemImage: "arrow.triangle.branch")
+                    .foregroundStyle(git.isClean ? TerminalTheme.dim : AppTheme.warning)
+
+                if git.aheadCount > 0 || git.behindCount > 0 {
+                    HStack(spacing: 4) {
+                        if git.aheadCount > 0  { Text("↑\(git.aheadCount)") }
+                        if git.behindCount > 0 { Text("↓\(git.behindCount)") }
+                    }
+                    .foregroundStyle(TerminalTheme.dim)
+                }
+            }
+
             Spacer()
 
             Text("\(session.columns)×\(session.rows)")
@@ -21,6 +36,11 @@ struct SessionStatusBar: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
         .background(AppTheme.toolbar.opacity(0.76))
+    }
+
+    private var separator: some View {
+        Text("·")
+            .foregroundStyle(TerminalTheme.dim.opacity(0.4))
     }
 
     private var sessionKindLabel: String {

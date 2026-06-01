@@ -9,53 +9,88 @@ enum SSHConfigBuilder {
     static let sshPath = "/usr/bin/ssh"
 
     static func launchConfig(for host: SSHHost, workingDirectory: String?) -> SSHLaunchConfig? {
+        guard var config = execConfig(for: host, remoteCommand: nil) else { return nil }
+
+        if let remoteCommand = buildRemoteCommand(host: host, workingDirectory: workingDirectory) {
+            config.args += ["-t", remoteCommand]
+        }
+
+        return config
+    }
+
+    /// Non-interactive SSH invocation for one-shot remote commands (directory listing).
+    static func execConfig(for host: SSHHost, remoteCommand: String?) -> SSHLaunchConfig? {
         guard let destination = SSHInputValidator.destination(for: host) else {
             return nil
         }
 
-        var args: [String] = []
+        var args = baseSSHArgs(for: host)
         var extraEnv: [String: String] = [:]
-
-        args += [
-            "-p", "\(host.port)",
-            "-o", "ConnectTimeout=\(SSHConnectionDiagnostics.connectTimeoutSeconds)",
-            "-o", "BatchMode=no"
-        ]
-
-        if let credential = host.credentialRef {
-            switch credential.kind {
-            case .privateKey:
-                let keyPath = (credential.label as NSString).expandingTildeInPath
-                args += ["-i", keyPath]
-
-            case .password:
-                // Let SSH_ASKPASS read the stored password from Keychain so the
-                // secret is never written into the helper script.
-                if let account = credential.keychainAccount,
-                   SSHCredentialStorage.containsPassword(account: account),
-                   let scriptPath = SSHAskPassHelper.write(account: account) {
-                    extraEnv["SSH_ASKPASS"] = scriptPath
-                    // Force ssh to use the askpass helper even when a TTY is present.
-                    extraEnv["SSH_ASKPASS_REQUIRE"] = "force"
-                    // Some SSH versions require DISPLAY to be set to use askpass.
-                    if extraEnv["DISPLAY"] == nil {
-                        extraEnv["DISPLAY"] = ":0"
-                    }
-                }
-
-            case .agent:
-                // SSH config alias or agent — let the system ssh config handle auth.
-                break
-            }
-        }
-
+        applyCredentialOptions(for: host, args: &args, extraEnvironment: &extraEnv)
         args.append(destination)
 
-        if let remoteCommand = buildRemoteCommand(host: host, workingDirectory: workingDirectory) {
-            args += ["-t", remoteCommand]
+        if let remoteCommand, !remoteCommand.isEmpty {
+            args.append(remoteCommand)
         }
 
         return SSHLaunchConfig(args: args, extraEnvironment: extraEnv)
+    }
+
+    /// Rebuilds credential-related environment variables so temp askpass/key files exist
+    /// before SSH starts or retries.
+    static func refreshedExtraEnvironment(for host: SSHHost, from config: SSHLaunchConfig) -> [String: String] {
+        var extraEnv = config.extraEnvironment
+        applyCredentialEnvironment(for: host, extraEnvironment: &extraEnv)
+        return extraEnv
+    }
+
+    private static func baseSSHArgs(for host: SSHHost) -> [String] {
+        [
+            "-p", "\(host.port)",
+            "-o", "ConnectTimeout=\(SSHConnectionDiagnostics.connectTimeoutSeconds)",
+            "-o", "ConnectionAttempts=\(SSHConnectionSettings.openSSHConnectionAttempts)",
+            "-o", "BatchMode=no"
+        ]
+    }
+
+    private static func applyCredentialOptions(
+        for host: SSHHost,
+        args: inout [String],
+        extraEnvironment: inout [String: String]
+    ) {
+        guard let credential = host.credentialRef else { return }
+
+        switch credential.kind {
+        case .privateKey:
+            if let keyPath = SSHPrivateKeyHelper.resolvedKeyPath(for: credential) {
+                args += ["-i", keyPath]
+            }
+
+        case .password:
+            applyCredentialEnvironment(for: host, extraEnvironment: &extraEnvironment)
+
+        case .agent:
+            break
+        }
+    }
+
+    private static func applyCredentialEnvironment(
+        for host: SSHHost,
+        extraEnvironment: inout [String: String]
+    ) {
+        guard let credential = host.credentialRef,
+              credential.kind == .password,
+              let account = credential.keychainAccount,
+              SSHCredentialStorage.containsPassword(account: account),
+              let scriptPath = SSHAskPassHelper.write(account: account) else {
+            return
+        }
+
+        extraEnvironment["SSH_ASKPASS"] = scriptPath
+        extraEnvironment["SSH_ASKPASS_REQUIRE"] = "force"
+        if extraEnvironment["DISPLAY"] == nil {
+            extraEnvironment["DISPLAY"] = ":0"
+        }
     }
 
     // MARK: - Remote startup command
@@ -63,51 +98,26 @@ enum SSHConfigBuilder {
     private static func buildRemoteCommand(host: SSHHost, workingDirectory: String?) -> String? {
         let dir = workingDirectory.flatMap { $0.isEmpty ? nil : $0 }
         let shell = host.remoteShell.flatMap(SSHInputValidator.normalizedRemoteShell)
+        let usesWindowsShell = shell.map(SSHInputValidator.isWindowsRemoteShell) ?? false
+        let usesWindowsPath = dir.map(isWindowsPath) ?? false
 
-        guard dir != nil || shell != nil else { return nil }
-
-        if let dir, isWindowsPath(dir) {
-            return buildWindowsRemoteCommand(dir: dir, shell: shell)
+        if usesWindowsPath || usesWindowsShell {
+            return ShellIntegration.windowsRemoteLaunchCommand(directory: dir, shell: shell)
         }
 
-        // Unix: cd to directory and exec the shell as a login shell.
-        let shellExpr = shell ?? "\"$SHELL\""
-        if let dir {
-            let escaped = dir.replacingOccurrences(of: "'", with: "'\\''")
-            return "cd '\(escaped)' && exec \(shellExpr) -l"
-        } else {
-            return "exec \(shellExpr) -l"
-        }
+        return ShellIntegration.unixRemoteLaunchCommand(directory: dir, shell: shell)
     }
 
     // MARK: - Windows path support
 
     /// Returns true when `path` looks like a Windows absolute path (e.g. `C:\...` or `C:/...`).
-    private static func isWindowsPath(_ path: String) -> Bool {
+    nonisolated static func isWindowsPath(_ path: String) -> Bool {
         let chars = Array(path)
         if chars.count >= 3, chars[0].isLetter, chars[1] == ":",
            chars[2] == "\\" || chars[2] == "/" {
             return true
         }
         return path.contains("\\")
-    }
-
-    /// Builds a remote command for a Windows SSH server (OpenSSH for Windows).
-    /// Uses PowerShell by default; falls back to cmd when the configured shell is cmd.exe.
-    private static func buildWindowsRemoteCommand(dir: String, shell: String?) -> String? {
-        let resolvedShell = shell ?? "powershell"
-        let lower = resolvedShell.lowercased()
-
-        if lower.hasSuffix("cmd.exe") || lower == "cmd" {
-            // cmd: /d lets cd cross drive letters.
-            // Escape double quotes inside the path.
-            let escaped = dir.replacingOccurrences(of: "\"", with: "\\\"")
-            return "cmd /k \"cd /d \\\"\(escaped)\\\"\""
-        } else {
-            // PowerShell / pwsh: single quotes inside a PS string are doubled.
-            let escaped = dir.replacingOccurrences(of: "'", with: "''")
-            return "\(resolvedShell) -NoExit -Command \"Set-Location '\(escaped)'\""
-        }
     }
 }
 
@@ -156,6 +166,10 @@ enum SSHInputValidator {
         normalizedRemoteShell(value) != nil
     }
 
+    nonisolated static func isWindowsRemoteShell(_ value: String) -> Bool {
+        windowsShells.contains(value.lowercased())
+    }
+
     nonisolated static func normalizedRemoteShell(_ value: String) -> String? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -184,8 +198,9 @@ enum SSHAskPassHelper {
             .appendingPathComponent("tabgt-askpass", isDirectory: true)
     }
 
-    /// Writes the script and returns its path, or nil on failure.
+    /// Ensures the askpass script exists and returns its path, or nil on failure.
     static func write(account: String) -> String? {
+        let scriptURL = scriptURL(for: account)
         let dir = scriptDirectory
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -197,29 +212,40 @@ enum SSHAskPassHelper {
             return nil
         }
 
-        let scriptURL = dir.appendingPathComponent(UUID().uuidString)
         let script = """
         #!/bin/sh
         exec /usr/bin/security find-generic-password -s \(shellQuoted(SSHCredentialStorage.service)) -a \(shellQuoted(account)) -w
         """
 
-        do {
-            try script.write(to: scriptURL, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o700 as NSNumber],
-                ofItemAtPath: scriptURL.path
-            )
-            return scriptURL.path
-        } catch {
-            return nil
+        for _ in 0..<2 {
+            do {
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o700 as NSNumber],
+                    ofItemAtPath: scriptURL.path
+                )
+                return scriptURL.path
+            } catch {
+                continue
+            }
         }
+
+        return nil
+    }
+
+    private static func scriptURL(for account: String) -> URL {
+        let safeName = account
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+        return scriptDirectory.appendingPathComponent("\(safeName).askpass")
     }
 
     private static func shellQuoted(_ value: String) -> String {
         "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 
-    /// Removes stale askpass scripts from previous sessions.
+    /// Removes stale askpass scripts from previous app sessions.
     static func cleanup() {
         try? FileManager.default.removeItem(at: scriptDirectory)
     }

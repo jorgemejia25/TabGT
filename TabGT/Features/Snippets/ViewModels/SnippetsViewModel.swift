@@ -17,6 +17,9 @@ final class SnippetsViewModel: ObservableObject {
 
     private let inputBridge: SessionInputBridge
     private let repository: LocalSnippetRepository
+    private weak var sessions: SessionsViewModel?
+    private weak var connections: ConnectionsViewModel?
+    private weak var terminalProfiles: TerminalProfilesViewModel?
 
     init(
         snippets: [CommandSnippet],
@@ -38,6 +41,25 @@ final class SnippetsViewModel: ObservableObject {
         SnippetsViewModel(
             snippets: PreviewData.commandSnippets,
             inputBridge: inputBridge
+        )
+    }
+
+    func wireLaunchDependencies(
+        sessions: SessionsViewModel,
+        connections: ConnectionsViewModel,
+        terminalProfiles: TerminalProfilesViewModel
+    ) {
+        self.sessions = sessions
+        self.connections = connections
+        self.terminalProfiles = terminalProfiles
+    }
+
+    func profileContext(for session: TerminalSession) -> SnippetProfileContext? {
+        guard let connections, let terminalProfiles else { return nil }
+        return SnippetLaunchResolver.profileContext(
+            for: session,
+            hosts: connections.hosts,
+            profiles: terminalProfiles.profiles
         )
     }
 
@@ -121,6 +143,27 @@ final class SnippetsViewModel: ObservableObject {
         if !submit {
             pendingInputFill = InputFill(sessionID: sessionID, text: snippet.command, submit: false)
         }
+    }
+
+    func run(_ snippet: CommandSnippet, from sourceSessionID: UUID) {
+        insert(snippet, for: sourceSessionID, submit: true)
+    }
+
+    func runInNewTab(_ snippet: CommandSnippet, from sourceSessionID: UUID) {
+        guard let sessions,
+              let connections,
+              let terminalProfiles else {
+            return
+        }
+
+        SnippetLaunchResolver.launchInNewTab(
+            snippet: snippet,
+            copying: sourceSessionID,
+            sessions: sessions,
+            hosts: connections.hosts,
+            profiles: terminalProfiles.profiles,
+            inputBridge: inputBridge
+        )
     }
 
     func createFromCommand(_ command: String, sessionID: UUID?) {

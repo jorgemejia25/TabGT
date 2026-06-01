@@ -18,6 +18,23 @@ struct StatusBar: View {
                     .foregroundStyle(AppTheme.textTertiary)
             }
 
+            if let git = session?.gitRepoState {
+                Text("·")
+                    .foregroundStyle(AppTheme.textTertiary.opacity(0.4))
+
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.triangle.branch")
+                    Text(git.isDetached ? "HEAD" : (git.branch ?? "—"))
+                        .foregroundStyle(git.isClean ? AppTheme.textTertiary : AppTheme.warning)
+
+                    if git.aheadCount > 0 || git.behindCount > 0 {
+                        if git.aheadCount > 0  { Text("↑\(git.aheadCount)") }
+                        if git.behindCount > 0 { Text("↓\(git.behindCount)") }
+                    }
+                }
+                .foregroundStyle(AppTheme.textTertiary)
+            }
+
             Spacer()
 
             Text(session.map { "\($0.columns)×\($0.rows)" } ?? "--")

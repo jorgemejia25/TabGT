@@ -10,11 +10,51 @@ import SwiftTerm
 final class TerminalSurfaceHostView: NSView {
     private(set) weak var hostedTerminal: TabGTTerminalView?
 
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        focusHostedTerminalIfNeeded(for: hit)
+        return hit === self ? hostedTerminal : hit
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if let hostedTerminal {
+            window?.makeFirstResponder(hostedTerminal)
+            hostedTerminal.mouseDown(with: event)
+        } else {
+            super.mouseDown(with: event)
+        }
+    }
+
+    private func focusHostedTerminalIfNeeded(for hit: NSView?) {
+        guard let hostedTerminal, isMouseDownEvent else { return }
+        guard hit === hostedTerminal || hit?.isDescendant(of: hostedTerminal) == true else { return }
+        window?.makeFirstResponder(hostedTerminal)
+    }
+
+    private var isMouseDownEvent: Bool {
+        switch NSApp.currentEvent?.type {
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            return true
+        default:
+            return false
+        }
+    }
+
     func host(_ terminal: TabGTTerminalView) {
         guard hostedTerminal !== terminal || terminal.superview !== self else { return }
 
-        hostedTerminal?.removeFromSuperview()
+        // Only remove a previous host if it is still our subview. After cross-window
+        // detach the pooled terminal may already live in another window's host.
+        if let previous = hostedTerminal, previous.superview === self {
+            previous.removeFromSuperview()
+        }
         hostedTerminal = terminal
+
+        guard terminal.superview !== self else { return }
 
         terminal.translatesAutoresizingMaskIntoConstraints = false
         addSubview(terminal)
@@ -27,7 +67,9 @@ final class TerminalSurfaceHostView: NSView {
     }
 
     func detachHostedTerminal() {
-        hostedTerminal?.removeFromSuperview()
+        if let terminal = hostedTerminal, terminal.superview === self {
+            terminal.removeFromSuperview()
+        }
         hostedTerminal = nil
     }
 }

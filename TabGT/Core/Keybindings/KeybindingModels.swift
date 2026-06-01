@@ -10,6 +10,7 @@ enum KeybindingCommand: String, CaseIterable, Codable, Hashable, Identifiable {
     case toggleInspector
     case closeActiveGroup
     case openSettings
+    case moveToNewWindow
 
     var id: String { rawValue }
 
@@ -31,6 +32,8 @@ enum KeybindingCommand: String, CaseIterable, Codable, Hashable, Identifiable {
             return "Close group"
         case .openSettings:
             return "Open settings"
+        case .moveToNewWindow:
+            return "Move to new window"
         }
     }
 }

@@ -10,6 +10,7 @@ struct KeybindingActionContext {
     var toggleInspector: () -> Void = {}
     var closeActiveGroup: () -> Void = {}
     var openSettings: () -> Void = {}
+    var moveToNewWindow: () -> Void = {}
     var focusTabAtIndex: (Int) -> Void = { _ in }
 
     func perform(_ command: KeybindingCommand) {
@@ -30,6 +31,8 @@ struct KeybindingActionContext {
             closeActiveGroup()
         case .openSettings:
             openSettings()
+        case .moveToNewWindow:
+            moveToNewWindow()
         }
     }
 }

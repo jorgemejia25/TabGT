@@ -2,6 +2,7 @@ import SwiftUI
 
 struct InspectorClipTraySection: View {
     @ObservedObject var viewModel: AutomationsViewModel
+    var reorderSectionID: InspectorSectionID? = nil
     @State private var manualEntry = ""
     @State private var manualDescription = ""
     @FocusState private var focusedField: ManualEntryField?
@@ -19,20 +20,21 @@ struct InspectorClipTraySection: View {
         InspectorAccordionSection(
             title: "Clip Tray",
             storageKey: "tabgt.inspector.expanded.clipTray",
-            defaultExpanded: true
+            defaultExpanded: true,
+            reorderSectionID: reorderSectionID
         ) {
             manualEntryForm
-                .padding(.bottom, 6)
 
             if viewModel.capturedClips.isEmpty {
-                Text("No captures yet — add one above")
-                    .font(.system(size: 11, weight: .regular))
-                    .foregroundStyle(AppTheme.textTertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .frame(height: 24)
+                InspectorEmptyState(message: "No captures yet")
             } else {
-                ForEach(viewModel.capturedClips) { clip in
-                    capturedClipRow(clip)
+                InspectorGroupedList {
+                    ForEach(Array(viewModel.capturedClips.enumerated()), id: \.element.id) { index, clip in
+                        if index > 0 {
+                            InspectorGroupedListDivider()
+                        }
+                        capturedClipRow(clip)
+                    }
                 }
             }
         }
@@ -47,7 +49,7 @@ struct InspectorClipTraySection: View {
     }
 
     private var manualEntryForm: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 5) {
             HStack(spacing: 6) {
                 TextField("Add clip manually", text: $manualEntry)
                     .textFieldStyle(.plain)
@@ -60,7 +62,7 @@ struct InspectorClipTraySection: View {
                     Image(systemName: "plus.circle.fill")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(canAddManualEntry ? AppTheme.selectionBlue : AppTheme.textTertiary)
-                        .frame(width: 22, height: 22)
+                        .frame(width: 20, height: 20)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plainClickable)
@@ -75,11 +77,11 @@ struct InspectorClipTraySection: View {
                 .focused($focusedField, equals: .description)
                 .onSubmit(submitManualEntry)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(fieldBackground, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .padding(.horizontal, InspectorMetrics.contentInset)
+        .padding(.vertical, 7)
+        .background(fieldBackground, in: InspectorMetrics.contentShape)
         .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
+            InspectorMetrics.contentShape
                 .stroke(fieldBorder, lineWidth: 1)
         )
         .animation(.easeOut(duration: 0.12), value: focusedField)
@@ -88,7 +90,7 @@ struct InspectorClipTraySection: View {
     private var fieldBackground: Color {
         focusedField != nil
             ? AppTheme.editor.opacity(0.92)
-            : AppTheme.editor.opacity(0.55)
+            : InspectorMetrics.contentFill
     }
 
     private var fieldBorder: Color {
@@ -105,76 +107,53 @@ struct InspectorClipTraySection: View {
     }
 
     private func capturedClipRow(_ clip: CapturedClip) -> some View {
-        HStack(alignment: .center, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(clip.value)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(AppTheme.textPrimary)
-                    .lineLimit(1)
-                    .textSelection(.enabled)
-
-                if let description = clip.description {
-                    Text(description)
-                        .font(.system(size: 10, weight: .regular))
-                        .foregroundStyle(AppTheme.textSecondary)
-                        .lineLimit(2)
-                        .textSelection(.enabled)
-                }
-
-                HStack(spacing: 4) {
-                    Text("from \(clip.sourceLabel)")
+        InspectorGroupedListRow {
+            HStack(alignment: .center, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(clip.value)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(AppTheme.textPrimary)
                         .lineLimit(1)
+                        .textSelection(.enabled)
 
-                    Text("·")
-                        .foregroundStyle(AppTheme.textTertiary)
+                    if let description = clip.description {
+                        Text(description)
+                            .font(.system(size: 10, weight: .regular))
+                            .foregroundStyle(AppTheme.textSecondary)
+                            .lineLimit(2)
+                            .textSelection(.enabled)
+                    }
 
-                    Text(viewModel.relativeCaptureTime(for: clip))
+                    HStack(spacing: 4) {
+                        Text("from \(clip.sourceLabel)")
+                            .lineLimit(1)
+
+                        Text("·")
+                            .foregroundStyle(AppTheme.textTertiary)
+
+                        Text(viewModel.relativeCaptureTime(for: clip))
+                    }
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(AppTheme.textTertiary)
                 }
-                .font(.system(size: 10, weight: .regular))
-                .foregroundStyle(AppTheme.textTertiary)
-            }
 
-            Spacer(minLength: 0)
+                Spacer(minLength: 0)
 
-            HStack(spacing: 2) {
-                Button {
-                    viewModel.presentEditClip(for: clip)
-                } label: {
-                    Image(systemName: "pencil")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(AppTheme.textTertiary)
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
+                HStack(spacing: 0) {
+                    clipActionButton("pencil", help: "Edit clip") {
+                        viewModel.presentEditClip(for: clip)
+                    }
+
+                    clipActionButton("doc.on.doc", help: "Copy to clipboard") {
+                        viewModel.copyToPasteboard(clip)
+                    }
+
+                    clipActionButton("xmark", help: "Remove clip") {
+                        viewModel.removeClip(clip)
+                    }
                 }
-                .buttonStyle(.plainClickable)
-                .help("Edit clip")
-
-                Button {
-                    viewModel.copyToPasteboard(clip)
-                } label: {
-                    Image(systemName: "doc.on.doc")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(AppTheme.textSecondary)
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plainClickable)
-                .help("Copy to clipboard")
-
-                Button {
-                    viewModel.removeClip(clip)
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(AppTheme.textTertiary)
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plainClickable)
-                .help("Remove clip")
             }
         }
-        .frame(minHeight: 36)
         .contextMenu {
             Button("Edit") {
                 viewModel.presentEditClip(for: clip)
@@ -188,5 +167,21 @@ struct InspectorClipTraySection: View {
                 viewModel.removeClip(clip)
             }
         }
+    }
+
+    private func clipActionButton(
+        _ systemImage: String,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(AppTheme.textTertiary)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plainClickable)
+        .help(help)
     }
 }

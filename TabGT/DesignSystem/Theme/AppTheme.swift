@@ -116,6 +116,35 @@ enum ThemeCatalog {
         terminalSystem: .themeHex(0x8B949E)
     )
 
+    /// True black for OLED displays — chrome uses near-black grays on #000000.
+    static let oled = TabGTTheme(
+        id: "oled",
+        displayName: "OLED",
+        windowBackground: .themeHex(0x000000),
+        backgroundGradientMid: .themeHex(0x000000),
+        backgroundGradientDeep: .themeHex(0x000000),
+        blueWash: .themeHex(0x000000),
+        blueWashOpacity: 0,
+        navigator: .themeHex(0x050505),
+        toolbar: .themeHex(0x080808),
+        editor: .themeHex(0x000000),
+        panel: .themeHex(0x050505),
+        elevatedPanel: .themeHex(0x0A0A0A),
+        separator: .themeHex(0x141414),
+        textPrimary: .themeHex(0xE8E8E8),
+        textSecondary: .themeHex(0x9A9A9A),
+        textTertiary: .themeHex(0x636363),
+        selectionBlue: .themeHex(0x0A84FF),
+        selectionBlueMuted: .themeHex(0x003366),
+        warning: .themeHex(0xFFD60A),
+        danger: .themeHex(0xFF453A),
+        success: .themeHex(0x32D74B),
+        terminalBackground: .themeHex(0x000000),
+        terminalForeground: .themeHex(0xE8E8E8),
+        terminalCommand: .themeHex(0x58A6FF),
+        terminalSystem: .themeHex(0x8E8E93)
+    )
+
     /// Apple Xcode dark — cool blue tint and top wash.
     static let xcodeDark = TabGTTheme(
         id: "xcode-dark",
@@ -352,6 +381,7 @@ enum ThemeCatalog {
 
     static let all: [TabGTTheme] = [
         dark,
+        oled,
         light,
         xcodeDark,
         atomOneDark,

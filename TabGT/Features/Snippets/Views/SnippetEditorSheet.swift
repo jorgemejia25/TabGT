@@ -3,6 +3,7 @@ import SwiftUI
 struct SnippetEditorSheet: View {
     @ObservedObject var viewModel: SnippetsViewModel
     @Binding var draft: SnippetDraft
+    var profileContext: SnippetProfileContext?
 
     @Environment(\.dismiss) private var dismiss
 
@@ -65,6 +66,17 @@ struct SnippetEditorSheet: View {
                         }
                     }
 
+                    editorSection("New Tab") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Used when you choose Run in New Tab from the snippet menu.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(AppTheme.textSecondary)
+
+                            startupFolderPicker
+                        }
+                        .padding(.leading, 138)
+                    }
+
                     editorSection("Preview") {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Type `\(draft.trigger.isEmpty ? "trigger" : draft.trigger)` in the terminal to expand this command.")
@@ -94,8 +106,33 @@ struct SnippetEditorSheet: View {
 
             sheetFooter
         }
-        .frame(width: 580, height: 460)
+        .frame(width: 580, height: 520)
         .background(AppTheme.current.windowBackground)
+    }
+
+    @ViewBuilder
+    private var startupFolderPicker: some View {
+        if let profileContext, !profileContext.folders.isEmpty {
+            Picker("Startup folder", selection: $draft.startupFolderID) {
+                Text("Profile default").tag(nil as UUID?)
+                ForEach(profileContext.folders) { folder in
+                    Text(folder.name).tag(Optional(folder.id))
+                }
+            }
+            .labelsHidden()
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let folderID = draft.startupFolderID,
+               let folder = profileContext.folders.first(where: { $0.id == folderID }) {
+                Text(folder.path)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(AppTheme.textTertiary)
+            }
+        } else {
+            Text("Startup folder is chosen from the active tab's profile when the snippet runs.")
+                .font(.system(size: 11))
+                .foregroundStyle(AppTheme.textSecondary)
+        }
     }
 
     private var sheetHeader: some View {

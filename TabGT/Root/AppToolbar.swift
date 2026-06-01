@@ -14,7 +14,7 @@ struct AppToolbar: View {
 
             // Traffic-light clearance — only needed when the sidebar is hidden.
             if !sidebarVisible {
-                Color.clear.frame(width: 76)
+                Color.clear.frame(width: ShellLayout.trafficLightClearanceWidth)
             }
 
             // Sidebar toggle

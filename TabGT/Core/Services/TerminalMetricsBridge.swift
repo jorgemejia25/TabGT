@@ -7,14 +7,27 @@ import SwiftTerm
 /// `LocalProcessTerminalView` for keyboard I/O.
 @MainActor
 class TerminalMetricsCoordinator: NSObject, LocalProcessTerminalViewDelegate {
-    private let sessionID: UUID
-    private weak var sessions: SessionsViewModel?
+    let sessionID: UUID
+    weak var sessions: SessionsViewModel?
     var terminalView: TabGTTerminalView?
     var lastRequestID: UUID?
+    /// Local shells are ready immediately; SSH coordinators flip this after handshake.
+    private(set) var isInputDeliveryReady = true
+    private(set) var isTerminalConfigured = false
+    private var publishedColumns: Int?
+    private var publishedRows: Int?
 
     init(sessionID: UUID, sessions: SessionsViewModel) {
         self.sessionID = sessionID
         self.sessions = sessions
+    }
+
+    func markTerminalConfigured() {
+        isTerminalConfigured = true
+    }
+
+    func setInputDeliveryReady(_ ready: Bool) {
+        isInputDeliveryReady = ready
     }
 
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
@@ -23,15 +36,22 @@ class TerminalMetricsCoordinator: NSObject, LocalProcessTerminalViewDelegate {
 
     func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
 
-    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
+        sessions?.updateCurrentDirectory(sessionID: sessionID, directory: directory)
+    }
+
+    func reportDirectoryChange(_ rawPath: String) {
+        sessions?.reportDirectoryChange(sessionID: sessionID, rawPath: rawPath)
+    }
 
     func processTerminated(source: TerminalView, exitCode: Int32?) {}
 
     func publishInitialGeometry(from source: TabGTTerminalView) {
-        sizeChanged(
-            source: source,
-            newCols: source.terminal.cols,
-            newRows: source.terminal.rows
-        )
+        let cols = source.terminal.cols
+        let rows = source.terminal.rows
+        guard publishedColumns != cols || publishedRows != rows else { return }
+        publishedColumns = cols
+        publishedRows = rows
+        sizeChanged(source: source, newCols: cols, newRows: rows)
     }
 }

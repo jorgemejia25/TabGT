@@ -56,6 +56,26 @@ struct SnippetRepositoryTests {
         #expect(decoded.snippets.count == snippets.count)
         #expect(decoded.snippets.map(\.trigger).sorted() == snippets.map(\.trigger).sorted())
     }
+
+    @Test func decodesLegacySnippetWithoutLaunchFields() throws {
+        let json = """
+        {
+          "schemaVersion": 1,
+          "snippets": [
+            {
+              "id": "00000000-0000-0000-0000-000000000701",
+              "title": "Git Status",
+              "trigger": "gs",
+              "command": "git status --short"
+            }
+          ]
+        }
+        """
+        let document = try JSONDecoder().decode(SnippetsDocument.self, from: Data(json.utf8))
+        #expect(document.snippets.count == 1)
+        #expect(document.snippets[0].launchMode == .currentTab)
+        #expect(document.snippets[0].startupFolderID == nil)
+    }
 }
 
 @MainActor

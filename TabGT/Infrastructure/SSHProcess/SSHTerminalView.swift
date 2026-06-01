@@ -15,6 +15,7 @@ struct SSHTerminalView: View {
     var body: some View {
         SSHTerminalNSViewRepresentable(
             sessionID: session.id,
+            workingDirectory: session.kind.workingDirectory,
             host: host,
             launchConfig: launchConfig,
             sessions: sessions,
@@ -29,6 +30,7 @@ struct SSHTerminalView: View {
 
 private struct SSHTerminalNSViewRepresentable: NSViewRepresentable {
     var sessionID: UUID
+    var workingDirectory: String?
     var host: SSHHost
     var launchConfig: SSHLaunchConfig
     @ObservedObject var sessions: SessionsViewModel
@@ -38,61 +40,116 @@ private struct SSHTerminalNSViewRepresentable: NSViewRepresentable {
     @ObservedObject var automations: AutomationsViewModel
 
     func makeCoordinator() -> SSHSessionCoordinator {
-        SSHSessionCoordinator(sessionID: sessionID, host: host, sessions: sessions)
+        SSHSessionCoordinator(
+            sessionID: sessionID,
+            host: host,
+            launchConfig: launchConfig,
+            sessions: sessions
+        )
     }
 
     func makeNSView(context: Context) -> TerminalSurfaceHostView {
         let surfaceHost = TerminalSurfaceHostView()
-        let terminal = resolveTerminal(context: context)
+        let terminal = resolveTerminal(context: context, configureIfNeeded: true)
         surfaceHost.host(terminal)
         return surfaceHost
     }
 
     func updateNSView(_ nsView: TerminalSurfaceHostView, context: Context) {
-        let terminal = resolveTerminal(context: context)
+        let terminal = resolveTerminal(context: context, configureIfNeeded: false)
         nsView.host(terminal)
+        applyTheme(to: terminal)
+        applyFont(to: terminal)
 
-        guard let request = inputBridge.latestRequest,
-              request.sessionID == sessionID,
-              request.id != context.coordinator.lastRequestID else { return }
+        if let retry = sessions.sshRetryRequest,
+           retry.sessionID == sessionID,
+           retry.id != context.coordinator.lastRetryRequestID {
+            context.coordinator.lastRetryRequestID = retry.id
+            context.coordinator.retryConnection()
+        }
 
-        context.coordinator.lastRequestID = request.id
-        terminal.insertText(request.text, submit: request.submit)
+        deliverInputIfReady(to: terminal, context: context)
+    }
+
+    private func deliverInputIfReady(to terminal: TabGTTerminalView, context: Context) {
+        SessionInputDelivery.deliverIfNeeded(
+            to: terminal,
+            sessionID: sessionID,
+            sessions: sessions,
+            inputBridge: inputBridge,
+            isInputDeliveryReady: context.coordinator.isInputDeliveryReady,
+            lastRequestID: &context.coordinator.lastRequestID
+        )
     }
 
     static func dismantleNSView(_ nsView: TerminalSurfaceHostView, coordinator: SSHSessionCoordinator) {
         nsView.detachHostedTerminal()
     }
 
-    private func resolveTerminal(context: Context) -> TabGTTerminalView {
+    private func resolveTerminal(
+        context: Context,
+        configureIfNeeded: Bool
+    ) -> TabGTTerminalView {
         let terminal: TabGTTerminalView
         if let cached = TerminalViewPool.shared.view(for: sessionID) {
             terminal = cached
         } else {
             let view = TabGTTerminalView(frame: .zero)
             view.focusRingType = .none
+            let extraEnvironment = SSHConfigBuilder.refreshedExtraEnvironment(for: host, from: launchConfig)
             view.launchProcess(
                 executable: SSHConfigBuilder.sshPath,
                 args: launchConfig.args,
-                extraEnvironment: launchConfig.extraEnvironment
+                extraEnvironment: extraEnvironment
             )
             TerminalViewPool.shared.store(view, for: sessionID)
             terminal = view
         }
 
+        terminal.pasteMode = TerminalPasteMode.forRemoteShell(
+            host.remoteShell,
+            workingDirectory: workingDirectory
+        )
         terminal.processDelegate = context.coordinator
+        context.coordinator.terminalView = terminal
+
+        guard configureIfNeeded, !context.coordinator.isTerminalConfigured else {
+            return terminal
+        }
+
+        context.coordinator.markTerminalConfigured()
         terminal.snippetProvider = { snippets.snippets }
-        terminal.outputCallback = makeOutputCallback()
-        terminal.connectionOutputCallback = { text in
+        terminal.directoryChangeHandler = { path in
             Task { @MainActor in
-                context.coordinator.processConnectionOutput(text)
+                context.coordinator.reportDirectoryChange(path)
+            }
+        }
+        terminal.outputCallback = makeOutputCallback()
+        terminal.claudeOSCCallback = makeClaudeOSCCallback()
+        terminal.gitOSCCallback = makeGitOSCCallback()
+        terminal.connectionOutputCallback = { [weak coordinator = context.coordinator] text in
+            guard let coordinator else { return }
+            DispatchQueue.main.async {
+                coordinator.processConnectionOutput(text)
             }
         }
         terminal.applyTabGTKeyboardSettings()
-        applyTheme(to: terminal)
-        applyFont(to: terminal)
-        context.coordinator.terminalView = terminal
+        context.coordinator.onInputDeliveryReady = { [weak coordinator = context.coordinator] in
+            guard let coordinator,
+                  let terminal = coordinator.terminalView else {
+                return
+            }
+            SessionInputDelivery.deliverIfNeeded(
+                to: terminal,
+                sessionID: sessionID,
+                sessions: sessions,
+                inputBridge: inputBridge,
+                isInputDeliveryReady: coordinator.isInputDeliveryReady,
+                lastRequestID: &coordinator.lastRequestID
+            )
+        }
         context.coordinator.publishInitialGeometry(from: terminal)
+        deliverInputIfReady(to: terminal, context: context)
         return terminal
     }
 
@@ -110,6 +167,26 @@ private struct SSHTerminalNSViewRepresentable: NSViewRepresentable {
                     sessionTitle: title
                 )
                 clips.forEach { automationsRef.addCapturedClip($0) }
+            }
+        }
+    }
+
+    private func makeClaudeOSCCallback() -> (String, String) -> Void {
+        let sessionsRef = sessions
+        let sid = sessionID
+        return { event, data in
+            Task { @MainActor in
+                sessionsRef.processClaudeOSCEvent(event, data: data, sessionID: sid)
+            }
+        }
+    }
+
+    private func makeGitOSCCallback() -> (String, String) -> Void {
+        let sessionsRef = sessions
+        let sid = sessionID
+        return { event, data in
+            Task { @MainActor in
+                sessionsRef.processGitOSCEvent(event, data: data, sessionID: sid)
             }
         }
     }

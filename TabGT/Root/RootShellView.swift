@@ -2,6 +2,8 @@ import AppKit
 import SwiftUI
 
 struct RootShellView: View {
+    private let windowID: UUID
+
     @StateObject private var inputBridge: SessionInputBridge
     @StateObject private var snippets: SnippetsViewModel
     @EnvironmentObject private var connections: ConnectionsViewModel
@@ -12,6 +14,7 @@ struct RootShellView: View {
 
     @Environment(\.scenePhase) private var scenePhase
 
+    @State private var destination: RootDestination = .terminal
     @State private var isNavigatorVisible = true
     @State private var isInspectorVisible = true
     @State private var connectionEditorPresentation: ConnectionEditorPresentation?
@@ -19,16 +22,17 @@ struct RootShellView: View {
     @State private var isNewProfileTypePresented = false
     @State private var pendingNewProfileKind: NewProfileKind?
     @State private var isSSHImportPresented = false
-    @State private var isSettingsPresented = false
     @State private var editingLocalProfile: LocalTerminalProfile?
 
     @AppStorage("tabgt.navigatorWidth") private var navigatorWidth: Double = 240
     @AppStorage("tabgt.inspectorWidth") private var inspectorWidth: Double = 300
 
-    init() {
+    init(windowID: UUID = UUID()) {
+        self.windowID = windowID
+
         let bridge = SessionInputBridge()
         let automations = AutomationsViewModel.live()
-        let sessions = SessionsViewModel()
+        let sessions = SessionsViewModel(windowID: windowID, isMain: true, coordinator: .shared)
         sessions.wireAutomations(automations)
 
         _inputBridge = StateObject(wrappedValue: bridge)
@@ -47,6 +51,7 @@ struct RootShellView: View {
                     NavigatorSidebar(
                         connections: connections,
                         terminalProfiles: terminalProfiles,
+                        destination: $destination,
                         onOpenHost: { host, folder in
                             sessions.openSSHSession(for: host, workingDirectory: folder)
                         },
@@ -85,50 +90,10 @@ struct RootShellView: View {
                         sidebarVisible: isNavigatorVisible,
                         isNavigatorVisible: $isNavigatorVisible,
                         isInspectorVisible: $isInspectorVisible,
-                        onOpenSettings: { isSettingsPresented = true }
+                        onOpenSettings: { destination = .settings }
                     )
 
-                    HStack(spacing: 0) {
-                        WorkspaceView(
-                            connections: connections,
-                            sessions: sessions,
-                            terminalProfiles: terminalProfiles,
-                            snippets: snippets,
-                            inputBridge: inputBridge
-                        )
-                        .environmentObject(automations)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                        if isInspectorVisible {
-                            InspectorPanel(
-                                host: connections.selectedHost,
-                                session: sessions.selectedSession,
-                                terminalProfiles: terminalProfiles,
-                                automations: automations,
-                                snippets: snippets,
-                                onEditHost: { host in
-                                    connectionEditorPresentation = .edit(host)
-                                },
-                                onDeleteHost: { host in
-                                    connections.delete(host.id)
-                                },
-                                onEditLocalProfile: { profile in
-                                    editingLocalProfile = profile
-                                    isLocalProfileEditorPresented = true
-                                }
-                            )
-                            .frame(width: inspectorWidth)
-                            .overlay(alignment: .leading) {
-                                ShellPanelResizeGrip(
-                                    edge: .inspectorLeading,
-                                    panelWidth: inspectorWidthBinding,
-                                    minWidth: 240,
-                                    maxWidth: 480
-                                )
-                                .offset(x: -ShellPanelResizeGrip.edgeOffset)
-                            }
-                        }
-                    }
+                    destinationContent
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -138,7 +103,11 @@ struct RootShellView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             StatusBar(host: connections.selectedHost, session: sessions.selectedSession)
         }
-        .background(WindowConfigurator())
+        .background {
+            WindowConfigurator { window in
+                KeybindingActionRouter.shared.updateContext(keybindingActionContext, for: window)
+            }
+        }
         .background {
             KeybindingEventMonitor(
                 store: keybindings,
@@ -147,10 +116,20 @@ struct RootShellView: View {
             )
         }
         .onAppear {
-            KeybindingActionRouter.shared.updateContext(keybindingActionContext)
+            KeybindingActionRouter.shared.updateContext(keybindingActionContext, for: NSApp.keyWindow)
+            snippets.wireLaunchDependencies(
+                sessions: sessions,
+                connections: connections,
+                terminalProfiles: terminalProfiles
+            )
+        }
+        .onDisappear {
+            if let window = NSApp.keyWindow {
+                KeybindingActionRouter.shared.removeContext(for: window)
+            }
         }
         .onChange(of: keybindingActionContextVersion) { _, _ in
-            KeybindingActionRouter.shared.updateContext(keybindingActionContext)
+            KeybindingActionRouter.shared.updateContext(keybindingActionContext, for: NSApp.keyWindow)
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {
@@ -189,17 +168,88 @@ struct RootShellView: View {
             .id(editingLocalProfile?.id)
         }
         .sheet(isPresented: $isSSHImportPresented) { SSHConfigImportView() }
-        .sheet(isPresented: $isSettingsPresented) {
+    }
+
+    @ViewBuilder
+    private var destinationContent: some View {
+        switch destination {
+        case .terminal:
+            HStack(spacing: 0) {
+                WorkspaceView(
+                    connections: connections,
+                    sessions: sessions,
+                    terminalProfiles: terminalProfiles,
+                    snippets: snippets,
+                    inputBridge: inputBridge
+                )
+                .environmentObject(automations)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                if isInspectorVisible {
+                    InspectorPanel(
+                        host: connections.selectedHost,
+                        session: sessions.selectedSession,
+                        connections: connections,
+                        terminalProfiles: terminalProfiles,
+                        automations: automations,
+                        snippets: snippets,
+                        inputBridge: inputBridge,
+                        sessions: sessions,
+                        onEditHost: { host in
+                            connectionEditorPresentation = .edit(host)
+                        },
+                        onDeleteHost: { host in
+                            connections.delete(host.id)
+                        },
+                        onEditLocalProfile: { profile in
+                            editingLocalProfile = profile
+                            isLocalProfileEditorPresented = true
+                        }
+                    )
+                    .frame(width: inspectorWidth)
+                    .overlay(alignment: .leading) {
+                        ShellPanelResizeGrip(
+                            edge: .inspectorLeading,
+                            panelWidth: inspectorWidthBinding,
+                            minWidth: 240,
+                            maxWidth: 480
+                        )
+                        .offset(x: -ShellPanelResizeGrip.edgeOffset)
+                    }
+                }
+            }
+
+        case .snippets:
+            SnippetsScreen(
+                viewModel: snippets,
+                session: sessions.selectedSession,
+                profileContext: activeSnippetProfileContext
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+        case .automations:
+            AutomationsScreen(
+                automations: automations,
+                snippets: snippets
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+        case .settings:
             SettingsView(
                 onManageLocalProfiles: {
-                    isSettingsPresented = false
+                    destination = .terminal
                     editingLocalProfile = nil
                     isLocalProfileEditorPresented = true
-                }
+                },
+                isModal: false
             )
-            .environmentObject(ThemeStore.shared)
-            .environmentObject(TerminalFontSettings.shared)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    private var activeSnippetProfileContext: SnippetProfileContext? {
+        guard let session = sessions.selectedSession else { return nil }
+        return snippets.profileContext(for: session)
     }
 
     private var navigatorWidthBinding: Binding<CGFloat> {
@@ -234,13 +284,13 @@ struct RootShellView: View {
             || connectionEditorPresentation != nil
             || isLocalProfileEditorPresented
             || isSSHImportPresented
-            || isSettingsPresented
     }
 
     private var keybindingActionContextVersion: Int {
         var hasher = Hasher()
         hasher.combine(isNavigatorVisible)
         hasher.combine(isInspectorVisible)
+        hasher.combine(destination)
         hasher.combine(sessions.layout.focusedGroupID)
         hasher.combine(sessions.layout.root.groups().map(\.selectedSessionID))
         return hasher.finalize()
@@ -282,7 +332,14 @@ struct RootShellView: View {
                 sessions.closeGroup(sessions.layout.focusedGroupID)
             },
             openSettings: {
-                isSettingsPresented = true
+                destination = .settings
+            },
+            moveToNewWindow: {
+                guard let group = sessions.layout.root.group(id: sessions.layout.focusedGroupID),
+                      let sessionID = group.selectedSessionID else {
+                    return
+                }
+                sessions.detachTab(sessionID: sessionID, from: group.id)
             },
             focusTabAtIndex: { index in
                 sessions.selectTab(at: index)
@@ -306,19 +363,5 @@ private struct ConnectionEditorPresentation: Identifiable {
 
     static func edit(_ host: SSHHost) -> ConnectionEditorPresentation {
         ConnectionEditorPresentation(id: host.id, host: host)
-    }
-}
-
-private struct WindowConfigurator: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { WindowSetupView() }
-    func updateNSView(_ nsView: NSView, context: Context) {}
-}
-
-private final class WindowSetupView: NSView {
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        guard let window else { return }
-        window.isOpaque = false
-        window.backgroundColor = .clear
     }
 }

@@ -3,8 +3,13 @@ import Testing
 
 struct WorkspaceLayoutTests {
     @MainActor
+    private func makeViewModel(sessions: [TerminalSession] = []) -> SessionsViewModel {
+        SessionsViewModel(sessions: sessions, coordinator: WorkspaceCoordinator())
+    }
+
+    @MainActor
     @Test func initialLayoutCreatesOneFocusedGroup() {
-        let viewModel = SessionsViewModel(sessions: PreviewData.sessions)
+        let viewModel = makeViewModel(sessions: PreviewData.sessions)
 
         guard case .group(let group) = viewModel.layout.root else {
             Issue.record("Expected initial layout to be a terminal group")
@@ -18,7 +23,7 @@ struct WorkspaceLayoutTests {
 
     @MainActor
     @Test func splitGroupCreatesRecursiveSplitAndFocusesNewGroup() {
-        let viewModel = SessionsViewModel(sessions: PreviewData.sessions)
+        let viewModel = makeViewModel(sessions: PreviewData.sessions)
         let originalGroupID = viewModel.layout.focusedGroupID
 
         viewModel.splitGroup(originalGroupID, axis: .horizontal)
@@ -40,7 +45,7 @@ struct WorkspaceLayoutTests {
 
     @MainActor
     @Test func movingTabBetweenGroupsUpdatesSourceDestinationAndSelection() {
-        let viewModel = SessionsViewModel(sessions: PreviewData.sessions)
+        let viewModel = makeViewModel(sessions: PreviewData.sessions)
         let originalGroupID = viewModel.layout.focusedGroupID
         let sessionID = PreviewData.sessions[0].id
 
@@ -67,7 +72,7 @@ struct WorkspaceLayoutTests {
 
     @MainActor
     @Test func splitLeftPlacesNewGroupBeforeCurrentGroup() {
-        let viewModel = SessionsViewModel(sessions: PreviewData.sessions)
+        let viewModel = makeViewModel(sessions: PreviewData.sessions)
         let originalGroupID = viewModel.layout.focusedGroupID
 
         viewModel.splitGroup(originalGroupID, placement: .left)
@@ -87,7 +92,7 @@ struct WorkspaceLayoutTests {
 
     @MainActor
     @Test func moveTabToNewSplitKeepsRemainingTabsInSourceGroup() {
-        let viewModel = SessionsViewModel(sessions: PreviewData.sessions)
+        let viewModel = makeViewModel(sessions: PreviewData.sessions)
         let sourceGroupID = viewModel.layout.focusedGroupID
         let movedSessionID = PreviewData.sessions[0].id
         let retainedSessionID = PreviewData.sessions[1].id
@@ -115,7 +120,7 @@ struct WorkspaceLayoutTests {
 
     @MainActor
     @Test func openSSHSessionAllowsDuplicateProfileTabsInSameGroup() {
-        let viewModel = SessionsViewModel()
+        let viewModel = makeViewModel()
         let host = PreviewData.hosts[0]
         let groupID = viewModel.layout.focusedGroupID
 
@@ -141,7 +146,7 @@ struct WorkspaceLayoutTests {
 
     @MainActor
     @Test func splitRatioIsClampedForResizableDividers() {
-        let viewModel = SessionsViewModel(sessions: PreviewData.sessions)
+        let viewModel = makeViewModel(sessions: PreviewData.sessions)
         let originalGroupID = viewModel.layout.focusedGroupID
 
         viewModel.splitGroup(originalGroupID, placement: .right)
@@ -163,7 +168,7 @@ struct WorkspaceLayoutTests {
 
     @MainActor
     @Test func selectTabAtIndexFocusesRequestedSession() {
-        let viewModel = SessionsViewModel(sessions: PreviewData.sessions)
+        let viewModel = makeViewModel(sessions: PreviewData.sessions)
         let groupID = viewModel.layout.focusedGroupID
 
         viewModel.selectTab(at: 1)
@@ -178,7 +183,7 @@ struct WorkspaceLayoutTests {
 
     @MainActor
     @Test func groupDisplayLabelUsesOneBasedTabNumbers() {
-        let viewModel = SessionsViewModel(sessions: PreviewData.sessions)
+        let viewModel = makeViewModel(sessions: PreviewData.sessions)
         let firstGroupID = viewModel.layout.focusedGroupID
 
         viewModel.splitGroup(firstGroupID, placement: .right)

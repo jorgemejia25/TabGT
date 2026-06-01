@@ -120,7 +120,7 @@ struct TerminalGroupTabBar: View {
         .dropDestination(for: TerminalTabDragPayload.self) { items, _ in
             guard let payload = items.first else { return false }
             guard TabDragDrop.shouldAccept(payload, in: group.id) else { return false }
-            viewModel.moveTab(sessionID: payload.sessionID, to: group.id)
+            viewModel.handleTabDrop(payload, to: group.id)
             return true
         }
     }
@@ -212,7 +212,11 @@ struct TerminalGroupTabItem: View {
     private var isSelected: Bool { session.id == group.selectedSessionID }
 
     private var dragPayload: TerminalTabDragPayload {
-        TerminalTabDragPayload(sessionID: session.id, sourceGroupID: group.id)
+        TerminalTabDragPayload(
+            sessionID: session.id,
+            sourceGroupID: group.id,
+            sourceWindowID: viewModel.windowID
+        )
     }
 
     var body: some View {
@@ -230,14 +234,28 @@ struct TerminalGroupTabItem: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .onTapGesture {
-                viewModel.select(session.id, in: group.id)
+            .overlay {
+                #if os(macOS)
+                TerminalTabDragSource(
+                    payload: dragPayload,
+                    onSelect: {
+                        viewModel.select(session.id, in: group.id)
+                    },
+                    onDragOutsideWindow: {
+                        viewModel.detachTab(sessionID: session.id, from: group.id)
+                    }
+                )
+                #else
+                Color.clear
+                    .onTapGesture {
+                        viewModel.select(session.id, in: group.id)
+                    }
+                #endif
             }
-            .draggable(dragPayload)
             .dropDestination(for: TerminalTabDragPayload.self) { items, _ in
                 guard let payload = items.first else { return false }
                 guard TabDragDrop.shouldAccept(payload, in: group.id, before: session.id) else { return false }
-                viewModel.moveTab(sessionID: payload.sessionID, to: group.id, before: session.id)
+                viewModel.handleTabDrop(payload, to: group.id, before: session.id)
                 return true
             }
 
@@ -318,6 +336,12 @@ struct TerminalGroupTabItem: View {
     }
 
     @ViewBuilder private var tabContextMenu: some View {
+        Button("Move to New Window") {
+            viewModel.detachTab(sessionID: session.id, from: group.id)
+        }
+
+        Divider()
+
         Button("Move to Split Right") {
             viewModel.moveTabToNewSplit(sessionID: session.id, from: group.id, placement: .right)
         }

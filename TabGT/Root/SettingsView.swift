@@ -3,10 +3,12 @@ import UniformTypeIdentifiers
 
 struct SettingsView: View {
     var onManageLocalProfiles: (() -> Void)?
+    var isModal: Bool = true
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var themeStore: ThemeStore
     @EnvironmentObject private var terminalFontSettings: TerminalFontSettings
+    @ObservedObject private var inspectorLayout = InspectorLayoutStore.shared
     @ObservedObject private var keybindings = KeybindingStore.shared
     @AppStorage("tabgt.preferredLocalShell") private var shell = "/bin/zsh"
     @State private var selectedSection = SettingsSection.general
@@ -14,12 +16,39 @@ struct SettingsView: View {
     @State private var confirmClose = true
     @State private var useSSHAgent = true
     @State private var strictHostChecking = true
+    @AppStorage(SSHConnectionSettings.retriesEnabledKey) private var sshRetriesEnabled = SSHConnectionSettings.defaultRetriesEnabled
+    @AppStorage(SSHConnectionSettings.maxRetriesKey) private var sshMaxRetries = SSHConnectionSettings.defaultMaxRetries
     @State private var isThemeImporterPresented = false
     @State private var themeImportError: ThemeImportError?
     @State private var showThemeImportError = false
 
     var body: some View {
-        HStack(spacing: 0) {
+        settingsLayout
+            .background(AppTheme.current.windowBackground)
+            .onAppear {
+                keybindings.reload()
+            }
+            .fileImporter(
+                isPresented: $isThemeImporterPresented,
+                allowedContentTypes: [.json],
+                allowsMultipleSelection: false
+            ) { result in
+                handleThemeImport(result)
+            }
+            .alert(
+                "Theme Import Failed",
+                isPresented: $showThemeImportError,
+                presenting: themeImportError
+            ) { _ in
+                Button("OK", role: .cancel) {}
+            } message: { error in
+                Text(error.localizedDescription)
+            }
+    }
+
+    @ViewBuilder
+    private var settingsLayout: some View {
+        let content = HStack(spacing: 0) {
             settingsSidebar
 
             Divider()
@@ -38,32 +67,19 @@ struct SettingsView: View {
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
 
-                Divider()
-                    .overlay(AppTheme.panelStroke)
+                if isModal {
+                    Divider()
+                        .overlay(AppTheme.panelStroke)
 
-                footer
+                    footer
+                }
             }
         }
-        .frame(width: 760, height: 520)
-        .background(AppTheme.current.windowBackground)
-        .onAppear {
-            keybindings.reload()
-        }
-        .fileImporter(
-            isPresented: $isThemeImporterPresented,
-            allowedContentTypes: [.json],
-            allowsMultipleSelection: false
-        ) { result in
-            handleThemeImport(result)
-        }
-        .alert(
-            "Theme Import Failed",
-            isPresented: $showThemeImportError,
-            presenting: themeImportError
-        ) { _ in
-            Button("OK", role: .cancel) {}
-        } message: { error in
-            Text(error.localizedDescription)
+
+        if isModal {
+            content.frame(width: 760, height: 520)
+        } else {
+            content.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -201,6 +217,28 @@ struct SettingsView: View {
                         .foregroundStyle(AppTheme.textSecondary)
                 }
             }
+            settingsSection("Connection Retries") {
+                Toggle("Retry failed connections", isOn: $sshRetriesEnabled)
+                if sshRetriesEnabled {
+                    settingRow("Max attempts") {
+                        Stepper(value: $sshMaxRetries, in: SSHConnectionSettings.minMaxRetries ... SSHConnectionSettings.maxMaxRetries) {
+                            Text("\(sshMaxRetries)")
+                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .foregroundStyle(AppTheme.textPrimary)
+                                .frame(width: 24, alignment: .trailing)
+                        }
+                        .frame(width: 140, alignment: .leading)
+                    }
+                }
+                Text(
+                    sshRetriesEnabled
+                        ? "Uses OpenSSH ConnectionAttempts=\(sshMaxRetries) and relaunches the session up to \(sshMaxRetries) times after handshake failures."
+                        : "Retries are off; each session makes a single connection attempt."
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(AppTheme.textTertiary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         case .keybindings:
             settingsSection("Shortcuts") {
                 ForEach(keybindings.resolvedBindings) { binding in
@@ -259,6 +297,10 @@ struct SettingsView: View {
                         .font(.system(size: 12, weight: .medium))
                         .buttonStyle(.plainClickable)
                 }
+            }
+        case .inspector:
+            settingsSection("Layout") {
+                InspectorLayoutSettingsPane(layoutStore: inspectorLayout)
             }
         }
     }
@@ -556,6 +598,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
     case ssh
     case keybindings
     case appearance
+    case inspector
     case security
 
     var id: String { rawValue }
@@ -572,6 +615,8 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
             return "Keybindings"
         case .appearance:
             return "Appearance"
+        case .inspector:
+            return "Inspector"
         case .security:
             return "Security"
         }
@@ -589,6 +634,8 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
             return "Keyboard shortcuts for terminal groups"
         case .appearance:
             return "Theme and interface density"
+        case .inspector:
+            return "Section order and visibility"
         case .security:
             return "Keys, agents and local trust"
         }
@@ -606,6 +653,8 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
             return "keyboard"
         case .appearance:
             return "paintpalette"
+        case .inspector:
+            return "sidebar.right"
         case .security:
             return "lock.shield"
         }

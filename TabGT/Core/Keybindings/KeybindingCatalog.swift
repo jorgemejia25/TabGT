@@ -4,6 +4,7 @@ enum KeybindingCatalog {
     static let presentationOrder: [KeybindingCommand] = [
         .newTerminal,
         .closeActiveTab,
+        .moveToNewWindow,
         .splitRight,
         .splitDown,
         .toggleNavigator,
@@ -27,6 +28,7 @@ enum KeybindingCatalog {
         [
             .newTerminal: try! KeyChord(dto: KeyChordDTO(key: "t", modifiers: ["command"])),
             .closeActiveTab: try! KeyChord(dto: KeyChordDTO(key: "w", modifiers: ["command"])),
+            .moveToNewWindow: try! KeyChord(dto: KeyChordDTO(key: "o", modifiers: ["command", "shift"])),
             .splitRight: try! KeyChord(dto: KeyChordDTO(key: "\\", modifiers: ["command"])),
             .splitDown: try! KeyChord(dto: KeyChordDTO(key: "\\", modifiers: ["command", "shift"])),
             .toggleNavigator: try! KeyChord(dto: KeyChordDTO(key: "b", modifiers: ["command"])),

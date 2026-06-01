@@ -69,12 +69,18 @@ final class SplitDropTargetNSView: NSView {
         registerForDraggedTypes(Self.dragTypes)
     }
 
-    /// Pass mouse clicks through to the terminal below; participate only during tab drags.
+    /// Pass normal mouse input through to the terminal below. The drag
+    /// pasteboard can retain the last tab payload after a drag finishes, so it
+    /// cannot be used by itself to decide whether this transparent view should
+    /// capture hit testing.
     override func hitTest(_ point: NSPoint) -> NSView? {
-        guard let superview else { return nil }
-        let local = convert(point, from: superview)
-        guard bounds.contains(local) else { return nil }
+        guard bounds.contains(point), !isUserMouseInteraction else { return nil }
         return TabDragPasteboard.isActive ? self : nil
+    }
+
+    private var isUserMouseInteraction: Bool {
+        guard let event = NSApp.currentEvent else { return false }
+        return event.type.isTerminalSurfaceMouseEvent
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
@@ -150,6 +156,27 @@ private enum TabDragPasteboard {
         }
 
         return nil
+    }
+}
+
+private extension NSEvent.EventType {
+    var isTerminalSurfaceMouseEvent: Bool {
+        switch self {
+        case .leftMouseDown,
+             .leftMouseUp,
+             .leftMouseDragged,
+             .rightMouseDown,
+             .rightMouseUp,
+             .rightMouseDragged,
+             .otherMouseDown,
+             .otherMouseUp,
+             .otherMouseDragged,
+             .mouseMoved,
+             .scrollWheel:
+            return true
+        default:
+            return false
+        }
     }
 }
 #endif

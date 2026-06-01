@@ -87,9 +87,11 @@ final class ConnectionsViewModel: ObservableObject {
 
     func delete(_ hostID: UUID) {
         if let host = hosts.first(where: { $0.id == hostID }),
-           host.credentialRef?.kind == .password,
            let account = host.credentialRef?.keychainAccount {
             SSHCredentialStorage.deletePassword(account: account)
+            if host.credentialRef?.kind == .privateKey {
+                SSHPrivateKeyHelper.removeKeyFile(account: account)
+            }
         }
 
         hosts.removeAll { $0.id == hostID }
